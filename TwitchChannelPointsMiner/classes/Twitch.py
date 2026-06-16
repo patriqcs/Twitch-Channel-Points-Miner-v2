@@ -64,18 +64,22 @@ class Twitch(object):
         "client_session",
         "client_version",
         "twilight_build_id_pattern",
+        "proxies",
     ]
 
-    def __init__(self, username, user_agent, password=None):
+    def __init__(self, username, user_agent, password=None, proxy=None):
         cookies_path = os.path.join(Path().absolute(), "cookies")
         Path(cookies_path).mkdir(parents=True, exist_ok=True)
         self.cookies_file = os.path.join(cookies_path, f"{username}.pkl")
         self.user_agent = user_agent
+        # dict for the requests `proxies=` argument, or None when no proxy is set.
+        self.proxies = proxy.requests_proxies if proxy is not None else None
         self.device_id = "".join(
             choice(string.ascii_letters + string.digits) for _ in range(32)
         )
         self.twitch_login = TwitchLogin(
-            CLIENT_ID, self.device_id, username, self.user_agent, password=password
+            CLIENT_ID, self.device_id, username, self.user_agent,
+            password=password, proxy=proxy,
         )
         self.running = True
         # self.integrity = None
@@ -141,13 +145,13 @@ class Twitch(object):
             headers = {"User-Agent": USER_AGENTS["Linux"]["FIREFOX"]}
 
             main_page_request = requests.get(
-                streamer.streamer_url, headers=headers)
+                streamer.streamer_url, headers=headers, proxies=self.proxies)
             response = main_page_request.text
             # logger.info(response)
             regex_settings = "(https://static.twitchcdn.net/config/settings.*?js|https://assets.twitch.tv/config/settings.*?.js)"
             settings_url = re.search(regex_settings, response).group(1)
 
-            settings_request = requests.get(settings_url, headers=headers)
+            settings_request = requests.get(settings_url, headers=headers, proxies=self.proxies)
             response = settings_request.text
             regex_spade = '"spade_url":"(.*?)"'
             streamer.stream.spade_url = re.search(
@@ -287,6 +291,7 @@ class Twitch(object):
                     "User-Agent": self.user_agent,
                     "X-Device-Id": self.device_id,
                 },
+                proxies=self.proxies,
             )
             logger.debug(
                 f"Data: {json_data}, Status code: {response.status_code}, Content: {response.text}"
@@ -356,7 +361,7 @@ class Twitch(object):
 
     def update_client_version(self):
         try:
-            response = requests.get(URL)
+            response = requests.get(URL, proxies=self.proxies)
             if response.status_code != 200:
                 logger.debug(
                     f"Error with update_client_version: {response.status_code}"
@@ -534,6 +539,7 @@ class Twitch(object):
                             RequestBroadcastQualitiesURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
+                            proxies=self.proxies,
                         )  # timeout=60
                         logger.debug(
                             f"Send RequestBroadcastQualitiesURL request for {streamers[index]} - Status code: {responseBroadcastQualities.status_code}"
@@ -553,6 +559,7 @@ class Twitch(object):
                             BroadcastLowestQualityURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
+                            proxies=self.proxies,
                         )  # timeout=60
                         logger.debug(
                             f"Send BroadcastLowestQualityURL request for {streamers[index]} - Status code: {responseStreamURLList.status_code}"
@@ -571,6 +578,7 @@ class Twitch(object):
                             StreamLowestQualityURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
+                            proxies=self.proxies,
                         )  # timeout=60
                         logger.debug(
                             f"Send StreamLowestQualityURL request for {streamers[index]} - Status code: {responseStreamLowestQualityURL.status_code}"
@@ -585,6 +593,7 @@ class Twitch(object):
                             headers={"User-Agent": self.user_agent},
                             # timeout=60,
                             timeout=20,
+                            proxies=self.proxies,
                         )
                         logger.debug(
                             f"Send minute watched request for {streamers[index]} - Status code: {response.status_code}"

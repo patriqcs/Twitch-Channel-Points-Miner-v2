@@ -70,17 +70,22 @@ class WebSocketsPool:
         )
 
     def __start(self, index):
+        run_kwargs = {}
+
+        # Route the PubSub WebSocket through the same proxy as the HTTP traffic.
+        proxy = getattr(Settings, "proxy", None)
+        if proxy is not None:
+            run_kwargs.update(proxy.ws_kwargs)
+
         if Settings.disable_ssl_cert_verification is True:
             import ssl
 
-            thread_ws = Thread(
-                target=lambda: self.ws[index].run_forever(
-                    sslopt={"cert_reqs": ssl.CERT_NONE}
-                )
-            )
+            run_kwargs["sslopt"] = {"cert_reqs": ssl.CERT_NONE}
             logger.warn("SSL certificate verification is disabled! Be aware!")
-        else:
-            thread_ws = Thread(target=lambda: self.ws[index].run_forever())
+
+        thread_ws = Thread(
+            target=lambda: self.ws[index].run_forever(**run_kwargs)
+        )
         thread_ws.daemon = True
         thread_ws.name = f"WebSocket #{self.ws[index].index}"
         thread_ws.start()

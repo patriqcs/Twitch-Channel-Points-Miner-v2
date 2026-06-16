@@ -18,6 +18,7 @@ from TwitchChannelPointsMiner.classes.entities.Streamer import (
     StreamerSettings,
 )
 from TwitchChannelPointsMiner.classes.Exceptions import StreamerDoesNotExistException
+from TwitchChannelPointsMiner.classes.Proxy import Proxy
 from TwitchChannelPointsMiner.classes.Settings import FollowersOrder, Priority, Settings
 from TwitchChannelPointsMiner.classes.Twitch import Twitch
 from TwitchChannelPointsMiner.classes.WebSocketsPool import WebSocketsPool
@@ -79,6 +80,9 @@ class TwitchChannelPointsMiner:
         enable_analytics: bool = False,
         disable_ssl_cert_verification: bool = False,
         disable_at_in_nickname: bool = False,
+        # Optional proxy for ALL traffic of this account (HTTP requests + WebSocket).
+        # Accepts a Proxy instance, a URL string ("socks5://user:pass@host:1080"), or None.
+        proxy=None,
         # Settings for logging and selenium as you can see.
         priority: list = [Priority.STREAK, Priority.DROPS, Priority.ORDER],
         # This settings will be global shared trought Settings class
@@ -96,6 +100,13 @@ class TwitchChannelPointsMiner:
         Settings.disable_ssl_cert_verification = disable_ssl_cert_verification
 
         Settings.disable_at_in_nickname = disable_at_in_nickname
+
+        # Normalize proxy: allow a plain URL string for convenience.
+        if isinstance(proxy, str):
+            proxy = Proxy.from_url(proxy)
+        Settings.proxy = proxy
+        if proxy is not None:
+            logger.info(f"Routing all traffic for {username} through proxy {proxy}")
 
         import socket
 
@@ -137,7 +148,7 @@ class TwitchChannelPointsMiner:
 
         # user_agent = get_user_agent("FIREFOX")
         user_agent = get_user_agent("CHROME")
-        self.twitch = Twitch(self.username, user_agent, password)
+        self.twitch = Twitch(self.username, user_agent, password, proxy=proxy)
 
         self.claim_drops_startup = claim_drops_startup
         self.priority = priority if isinstance(priority, list) else [priority]

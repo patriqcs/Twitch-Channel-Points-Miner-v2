@@ -54,12 +54,15 @@ class TwitchLogin(object):
         "shared_cookies"
     ]
 
-    def __init__(self, client_id, device_id, username, user_agent, password=None):
+    def __init__(self, client_id, device_id, username, user_agent, password=None, proxy=None):
         self.client_id = client_id
         self.device_id = device_id
         self.token = None
         self.login_check_result = False
         self.session = requests.session()
+        if proxy is not None:
+            # Route login / OAuth / user-id lookups through the proxy too.
+            self.session.proxies.update(proxy.requests_proxies)
         self.session.headers.update(
             {"Client-ID": self.client_id,
                 "X-Device-Id": self.device_id, "User-Agent": user_agent}
