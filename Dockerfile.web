@@ -15,14 +15,19 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DATA_DIR=/data
+    DATA_DIR=/data \
+    TZ=Europe/Berlin
 
 # tini = proper PID 1 (reaps miner subprocesses, forwards signals).
 # wireguard-tools/iproute2/iptables = optional built-in Mullvad tunnel (wg-quick);
 # iputils-ping = tunnel sanity check in the entrypoint.
+# tzdata = correct local time in logs; Europe/Berlin handles CEST/CET (DST) by
+# itself via the IANA database. Override with the TZ env var.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        tini wireguard-tools iproute2 iptables iputils-ping \
+        tini wireguard-tools iproute2 iptables iputils-ping tzdata \
+    && ln -sf /usr/share/zoneinfo/Europe/Berlin /etc/localtime \
+    && echo "Europe/Berlin" > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./requirements.txt
