@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>twitch-miner-manager</Name>
+  <Repository>ghcr.io/patriqcs/twitch-miner-multi:latest</Repository>
+  <Registry>https://ghcr.io/patriqcs/twitch-miner-multi</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project>https://github.com/patriqcs/Twitch-Channel-Points-Miner-v2</Project>
+  <Overview>
+    Web-managed multi-account Twitch Channel Points miner with per-account proxy
+    support. One container hosts a web UI (dashboard, accounts, proxies, live
+    logs) and runs one miner process per account. Watch-only: points, streaks,
+    drops and moments — no predictions/bets.
+  </Overview>
+  <Category>Tools: Other:</Category>
+  <WebUI>http://[IP]:[PORT:8000]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/rdavydov/Twitch-Channel-Points-Miner-v2/master/assets/logo.png</Icon>
+  <ExtraParams>--init</ExtraParams>
+  <Config Name="WebUI Port" Target="8000" Default="8000" Mode="tcp"
+          Description="Port for the web interface" Type="Port" Display="always"
+          Required="true" Mask="false">8000</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/twitch-miner-manager"
+          Mode="rw" Description="Database, cookies, logs and secret key"
+          Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/twitch-miner-manager</Config>
+  <Config Name="SECRET_KEY" Target="SECRET_KEY" Default="" Mode=""
+          Description="Optional Fernet key for credential encryption. Leave empty to auto-generate into /data."
+          Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="TZ" Target="TZ" Default="Europe/Berlin" Mode=""
+          Description="Timezone" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>

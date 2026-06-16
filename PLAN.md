@@ -78,6 +78,11 @@ nicht gebaut. Accounts legt der Nutzer selbst an; die UI importiert/verwaltet si
   Start/Stop/Restart, Device-Code-Login-Modal, Login-Test, Proxy-Zuordnung mit 5/5-Anzeige), Proxys
   (CRUD + Test mit Exit-IP/Latenz), Einstellungen (Streamer-Liste), Logs (Live-WS-Tail). Mobile-first
   (Sidebar + Mobile-Topnav). `npm run build` (tsc + vite) läuft fehlerfrei durch.
-- Phase 7: noch nicht implementiert.
-- Vorhandenes Fundament (frühere Session, uncommittet): `run.py`, `docker-entrypoint.sh`,
-  `Dockerfile.unraid`, `docker-compose.yml`, `start_all.sh`/`stop_all.sh`, `UNRAID.md`, `.gitignore`.
+- ✅ **Phase 7 fertig** (2026-06-16): `Dockerfile.web` (2-Stage: Node-Frontend-Build → Python-Runtime,
+  `tini` als PID 1 reapt Miner-Subprozesse), `.dockerignore` (hält Kontext schlank, verhindert
+  node_modules-Clobber), `Procfile` (honcho-Dev), `unraid-template.xml` (GHCR-Image, Port 8000,
+  `/data`-Volume, `SECRET_KEY`/`TZ`). `backend/main.py` serviert das gebaute Frontend (StaticFiles
+  `/assets` + SPA-Fallback, `api/`/`ws/`/`internal/` → 404). E2E im Container verifiziert: `/api/health`,
+  SPA-Root + Client-Routen, Assets, `/data`-Init (WAL-DB/cookies/logs/secret.key 0600). Image ~590 MB.
+- Legacy (abgelöst durch den Web-Ansatz, bleibt vorerst als Fallback): `Dockerfile.unraid` +
+  `docker-entrypoint.sh` + `docker-compose.yml` = 1 Container/Account ohne Web-UI (ENV `ACCOUNTS`).
