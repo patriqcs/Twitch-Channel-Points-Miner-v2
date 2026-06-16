@@ -23,8 +23,14 @@ INTERNAL_TOKEN_FILE = Path(
 # If unset, auto-generated once into INTERNAL_TOKEN_FILE.
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
 
+# Port the web UI / API (uvicorn) listens on inside the container.
+# Accepts WEB_PORT (preferred) or PORT; defaults to 8000.
+WEB_PORT = int(os.environ.get("WEB_PORT", os.environ.get("PORT", "8000")))
+
 # Where the backend reaches itself / the miner runner reaches the backend.
-BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000")
+# Defaults to the local web port so changing WEB_PORT keeps the internal
+# miner_runner <-> backend connection working without extra config.
+BACKEND_URL = os.environ.get("BACKEND_URL", f"http://127.0.0.1:{WEB_PORT}")
 
 # Business rule: how many accounts may share one proxy (Phase 4 enforces it).
 MAX_ACCOUNTS_PER_PROXY = int(os.environ.get("MAX_ACCOUNTS_PER_PROXY", "5"))

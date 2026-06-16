@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>twitch-miner-manager</Name>
-  <Repository>ghcr.io/patriqcs/twitch-miner-multi:latest</Repository>
-  <Registry>https://ghcr.io/patriqcs/twitch-miner-multi</Registry>
+  <Repository>ghcr.io/patriqcs/twitch-channel-points-miner-v2:web</Repository>
+  <Registry>https://ghcr.io/patriqcs/twitch-channel-points-miner-v2</Registry>
   <Network>bridge</Network>
   <Privileged>false</Privileged>
   <Support/>
@@ -18,8 +18,8 @@
   <Icon>https://raw.githubusercontent.com/rdavydov/Twitch-Channel-Points-Miner-v2/master/assets/logo.png</Icon>
   <ExtraParams>--init</ExtraParams>
   <Config Name="WebUI Port" Target="8000" Default="8000" Mode="tcp"
-          Description="Port for the web interface" Type="Port" Display="always"
-          Required="true" Mask="false">8000</Config>
+          Description="Host port for the web interface. Change the LEFT (host) value to whatever you like — the WebUI link follows it automatically. Only touch WEB_PORT (advanced) if you also change the container-internal port."
+          Type="Port" Display="always" Required="true" Mask="false">8000</Config>
   <Config Name="Data" Target="/data" Default="/mnt/user/appdata/twitch-miner-manager"
           Mode="rw" Description="Database, cookies, logs and secret key"
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/twitch-miner-manager</Config>
@@ -28,4 +28,7 @@
           Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
   <Config Name="TZ" Target="TZ" Default="Europe/Berlin" Mode=""
           Description="Timezone" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+  <Config Name="WEB_PORT" Target="WEB_PORT" Default="8000" Mode=""
+          Description="Container-internal port uvicorn binds to. Leave at 8000 for normal use (change only the WebUI Port host mapping above). If you set this to another value, set the WebUI Port container/target port to the SAME value."
+          Type="Variable" Display="advanced" Required="false" Mask="false">8000</Config>
 </Container>
