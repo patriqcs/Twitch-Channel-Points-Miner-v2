@@ -7,12 +7,22 @@ import { Play, Square } from "lucide-react";
 import { api, type Account } from "@/lib/api";
 import { useJsonWs } from "@/lib/ws";
 import { Button, Card, StatusBadge } from "@/components/ui";
-import { fmtNumber } from "@/lib/utils";
+import { fmtNumber, parseTs } from "@/lib/utils";
 
 interface StatusMsg {
   type: "status";
   accounts: { id: number; username: string; status: string }[];
 }
+
+interface EventMsg {
+  type: "event";
+  account_id: number;
+  event_type: string;
+  balance: number | null;
+  ts: string | null;
+}
+
+type Pt = { ts: string; balance: number };
 
 export default function Dashboard() {
   const qc = useQueryClient();
@@ -21,12 +31,23 @@ export default function Dashboard() {
     queryFn: api.listAccounts,
   });
   const [live, setLive] = useState<Record<string, string>>({});
+  // live points appended from the events stream (per account id) — no polling
+  const [livePoints, setLivePoints] = useState<Record<number, Pt[]>>({});
 
   useJsonWs<StatusMsg>("/ws/status", (msg) => {
     if (msg.type === "status") {
       const map: Record<string, string> = {};
       msg.accounts.forEach((a) => (map[a.username] = a.status));
       setLive(map);
+    }
+  });
+
+  useJsonWs<EventMsg>("/ws/events", (msg) => {
+    if (msg.type === "event" && msg.event_type === "points_snapshot" && msg.balance != null && msg.ts) {
+      setLivePoints((prev) => {
+        const arr = [...(prev[msg.account_id] ?? []), { ts: msg.ts!, balance: msg.balance! }];
+        return { ...prev, [msg.account_id]: arr.slice(-500) };
+      });
     }
   });
 
@@ -72,7 +93,7 @@ export default function Dashboard() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         {accounts.map((a) => (
-          <AccountCard key={a.id} account={a} status={statusOf(a)} />
+          <AccountCard key={a.id} account={a} status={statusOf(a)} live={livePoints[a.id] ?? []} />
         ))}
         {accounts.length === 0 && (
           <Card className="text-zinc-400">
@@ -101,17 +122,19 @@ function Stat({
   );
 }
 
-function AccountCard({ account, status }: { account: Account; status: string }) {
-  const { data: points = [] } = useQuery({
+function AccountCard({ account, status, live }: { account: Account; status: string; live: Pt[] }) {
+  // history loaded once; live updates arrive via the events WS (no polling)
+  const { data: history = [] } = useQuery({
     queryKey: ["points", account.id],
     queryFn: () => api.accountPoints(account.id),
-    refetchInterval: 30000,
   });
-  const chartData = points.map((p) => ({
-    t: p.ts ? new Date(p.ts).toLocaleTimeString("de-DE") : "",
+  const seen = new Set(history.map((p) => p.ts));
+  const merged = [...history, ...live.filter((p) => !seen.has(p.ts))];
+  const chartData = merged.map((p) => ({
+    t: p.ts ? parseTs(p.ts).toLocaleTimeString("de-DE") : "",
     balance: p.balance ?? 0,
   }));
-  const latest = points.length ? points[points.length - 1].balance : null;
+  const latest = merged.length ? merged[merged.length - 1].balance : null;
 
   return (
     <Card>

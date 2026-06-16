@@ -22,12 +22,17 @@ from backend.proxy_util import to_engine_proxy
 
 # ---- persisted redeem settings (AppSetting keys) ----
 CHANNEL_KEY = "REDEEM_CHANNEL"
-COOLDOWNS_KEY = "REDEEM_COOLDOWNS"     # JSON {reward_id: seconds}, applies to all accounts
-ALL_DELAY_KEY = "REDEEM_ALL_DELAY"     # seconds between accounts on "all accounts" redeem
+COOLDOWNS_KEY = "REDEEM_COOLDOWNS"        # JSON {reward_id: sec} per-account cooldown (all accounts)
+ALL_DELAY_KEY = "REDEEM_ALL_DELAY"        # default global spacing fallback
+MASTER_DELAYS_KEY = "REDEEM_MASTER_DELAYS"  # JSON {reward_id: sec} global spacing between any two fires
 
-# ---- in-memory per-(account,reward) client cooldown (resets on restart) ----
-_cooldowns: dict = {}            # (account_id, reward_id) -> epoch seconds when available again
+# ---- in-memory cooldown state (resets on restart) ----
+_cooldowns: dict = {}            # (account_id, reward_id) -> monotonic time when available again
+_global_free: dict = {}          # reward_id -> monotonic time when reward may fire again globally
 _cd_lock = threading.Lock()
+
+# error codes that permanently block an account for a reward (drop from rotation)
+PERMANENT_REASONS = {"insufficient_points", "out_of_stock", "disabled", "paused"}
 
 
 def _get_setting(session: Session, key: str, default=None):
@@ -50,11 +55,25 @@ def get_config(session: Session) -> dict:
         cooldowns = json.loads(raw) if raw else {}
     except ValueError:
         cooldowns = {}
+    raw_md = _get_setting(session, MASTER_DELAYS_KEY, "{}")
+    try:
+        master_delays = json.loads(raw_md) if raw_md else {}
+    except ValueError:
+        master_delays = {}
     return {
         "channel": _get_setting(session, CHANNEL_KEY, "") or "",
         "cooldowns": cooldowns,
+        "master_delays": master_delays,
         "all_delay": float(_get_setting(session, ALL_DELAY_KEY, "2") or 2),
     }
+
+
+def master_delay(session: Session, reward_id: str) -> float:
+    cfg = get_config(session)
+    try:
+        return float(cfg["master_delays"].get(reward_id, cfg["all_delay"]) or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def cooldown_seconds(session: Session, reward_id: str) -> float:
@@ -76,6 +95,70 @@ def cooldown_remaining(account_id: int, reward_id: str) -> float:
     with _cd_lock:
         until = _cooldowns.get((account_id, reward_id), 0)
     return max(0.0, until - time.monotonic())
+
+
+def _available_at(account_id: int, reward_id: str) -> float:
+    with _cd_lock:
+        return _cooldowns.get((account_id, reward_id), 0.0)
+
+
+def active_cooldowns() -> list:
+    """Snapshot of currently-active per-(account,reward) cooldowns (remaining > 0s)."""
+    now = time.monotonic()
+    with _cd_lock:
+        items = list(_cooldowns.items())
+    out = []
+    for (aid, rid), until in items:
+        rem = until - now
+        if rem > 0:
+            out.append({"account_id": aid, "reward_id": rid, "remaining": round(rem, 1)})
+    return out
+
+
+def schedule_master_redeem(channel_id, reward, candidates, per_account_cd,
+                           global_delay, count, log_event):
+    """Background thread: fire `reward` `count` times across `candidates`,
+    always taking the account that is free earliest, respecting each account's
+    per-account cooldown AND a global spacing between any two fires. Accounts
+    that hit a permanent block (no points / disabled / out of stock) drop out.
+
+    candidates: list of (account_id, username, token, proxies)
+    log_event: fn(account_id|None, ok, message) -> None
+    """
+    def _run():
+        pool = list(candidates)
+        rid = reward["id"]
+        fired = 0
+        for _ in range(max(1, count)):
+            if not pool:
+                break
+            # account that is free earliest
+            pool.sort(key=lambda a: _available_at(a[0], rid))
+            aid, uname, token, proxies = pool[0]
+            fire_at = max(_available_at(aid, rid), _global_free.get(rid, 0.0))
+            wait = fire_at - time.monotonic()
+            if wait > 0:
+                time.sleep(min(wait, 3600))
+            r = redeem_reward(token, proxies, channel_id, reward)
+            if r["ok"]:
+                set_account_cooldown(aid, rid, per_account_cd)
+                with _cd_lock:
+                    _global_free[rid] = time.monotonic() + global_delay
+                fired += 1
+                log_event(aid, True, f'„{reward["title"]}" eingelöst')
+            elif r.get("reason") in PERMANENT_REASONS:
+                pool = [a for a in pool if a[0] != aid]  # drop from rotation
+                log_event(aid, False, f'„{reward["title"]}": {r.get("message")} (raus)')
+            elif r.get("reason") == "server_cooldown":
+                set_account_cooldown(aid, rid, max(per_account_cd, 5))
+                log_event(aid, False, f'„{reward["title"]}": Server-Cooldown')
+            else:
+                set_account_cooldown(aid, rid, max(per_account_cd, 5))
+                log_event(aid, False, f'„{reward["title"]}": {r.get("message")}')
+        log_event(None, True, f'Master-Einlösen fertig: {fired}/{count}')
+
+    t = threading.Thread(target=_run, name="master-redeem", daemon=True)
+    t.start()
 
 # Same public web client id the twitch.tv site uses; Helix/OAuth app tokens are
 # NOT allowed to run these private operations.
@@ -108,6 +191,19 @@ mutation RedeemCustomReward($input: RedeemCommunityPointsCustomRewardInput!) {
     error { code }
   }
 }"""
+
+_REASONS = {
+    "NOT_ENOUGH_POINTS": "insufficient_points",
+    "INSUFFICIENT_POINTS": "insufficient_points",
+    "OUT_OF_STOCK": "out_of_stock",
+    "MAX_PER_STREAM": "out_of_stock",
+    "MAX_PER_USER_PER_STREAM": "out_of_stock",
+    "REWARD_COOLDOWN": "server_cooldown",
+    "GLOBAL_COOLDOWN": "server_cooldown",
+    "DISABLED": "disabled",
+    "REWARD_DISABLED": "disabled",
+    "PAUSED": "paused",
+}
 
 _ERROR_MESSAGES = {
     "NOT_ENOUGH_POINTS": "Nicht genug Punkte.",
@@ -232,16 +328,17 @@ def redeem_reward(token, proxies, channel_id: str, reward: dict,
         data = _gql(token, proxies, "RedeemCustomReward", _REDEEM_MUTATION,
                     {"input": input_})
     except RedeemError as e:
-        return {"ok": False, "message": str(e)}
+        return {"ok": False, "reason": "network", "message": str(e)}
 
     result = data.get("redeemCustomReward")
     if not result:
-        return {"ok": False, "message": "no confirmation from Twitch"}
+        return {"ok": False, "reason": "unknown", "message": "no confirmation from Twitch"}
     err = result.get("error")
     if err and err.get("code"):
         code = (err["code"] or "").upper()
-        return {"ok": False, "message": _ERROR_MESSAGES.get(code, f"rejected: {code}")}
+        return {"ok": False, "reason": _REASONS.get(code, "unknown"),
+                "message": _ERROR_MESSAGES.get(code, f"rejected: {code}")}
     redemption = result.get("redemption")
     if redemption and redemption.get("id"):
         return {"ok": True, "redemptionId": redemption["id"]}
-    return {"ok": False, "message": "no confirmation from Twitch"}
+    return {"ok": False, "reason": "unknown", "message": "no confirmation from Twitch"}

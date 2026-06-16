@@ -6,15 +6,13 @@ Supports per-reward client cooldowns (shared across accounts) and an
 so a reward with a per-account server cooldown can still be fired frequently by
 spreading it across accounts.
 """
-import time
-
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from backend import redeem as redeem_mod
-from backend.db import get_session
-from backend.models import Account
+from backend.db import engine, get_session
+from backend.models import Account, Event
 
 router = APIRouter(prefix="/api/redeem", tags=["redeem"])
 
@@ -30,6 +28,7 @@ def _get_account(session: Session, account_id: int) -> Account:
 class RedeemConfig(BaseModel):
     channel: str | None = None
     cooldowns: dict[str, float] | None = None
+    master_delays: dict[str, float] | None = None
     all_delay: float | None = None
 
 
@@ -46,10 +45,19 @@ def put_config(body: RedeemConfig, session: Session = Depends(get_session)):
     if body.cooldowns is not None:
         clean = {k: max(0.0, float(v)) for k, v in body.cooldowns.items()}
         redeem_mod._set_setting(session, redeem_mod.COOLDOWNS_KEY, json.dumps(clean))
+    if body.master_delays is not None:
+        clean = {k: max(0.0, float(v)) for k, v in body.master_delays.items()}
+        redeem_mod._set_setting(session, redeem_mod.MASTER_DELAYS_KEY, json.dumps(clean))
     if body.all_delay is not None:
         redeem_mod._set_setting(session, redeem_mod.ALL_DELAY_KEY, str(max(0.0, body.all_delay)))
     session.commit()
     return redeem_mod.get_config(session)
+
+
+@router.get("/cooldowns")
+def cooldowns():
+    """Currently-active per-(account,reward) cooldowns so the UI can show readiness."""
+    return redeem_mod.active_cooldowns()
 
 
 @router.get("/{account_id}/channel-points")
@@ -67,67 +75,67 @@ def channel_points(account_id: int, channel: str,
 class AllRedeemRequest(BaseModel):
     channel: str
     reward_id: str
+    count: int | None = None      # total redemptions to distribute (default: one per account)
+    global_delay: float | None = None  # override the per-reward global spacing
     prompt: str | None = None
+
+
+def _log_event(account_id, ok, message):
+    """Background-safe event logger (own session)."""
+    if account_id is None:
+        return
+    with Session(engine) as s:
+        s.add(Event(account_id=account_id, type="redeem", message=message))
+        s.commit()
 
 
 @router.post("/all")
 def redeem_all(body: AllRedeemRequest, session: Session = Depends(get_session)):
-    """Redeem one reward across all enabled accounts, skipping those on client
-    cooldown, with the configured internal delay between accounts."""
+    """Schedule `count` redemptions of one reward across all enabled accounts.
+
+    Picks the earliest-free account each time, respecting each account's
+    per-account cooldown AND a global spacing between fires. Runs in the
+    background and returns immediately.
+    """
     channel = body.channel.strip().lower()
-    cfg = redeem_mod.get_config(session)
-    delay = cfg["all_delay"]
     cd_secs = redeem_mod.cooldown_seconds(session, body.reward_id)
+    gdelay = body.global_delay if body.global_delay is not None \
+        else redeem_mod.master_delay(session, body.reward_id)
 
     accounts = session.exec(
         select(Account).where(Account.enabled == True)  # noqa: E712
     ).all()
 
-    # Scout the reward once (same channel for everyone) via the first usable account.
+    # Scout the reward once (same channel for everyone) + gather usable creds.
     reward = None
     channel_id = None
+    candidates = []
     for acc in accounts:
         try:
             token, proxies = redeem_mod.account_creds(session, acc)
-            state = redeem_mod.fetch_channel_points(token, proxies, channel)
         except redeem_mod.RedeemError:
             continue
-        reward = next((r for r in state["rewards"] if r["id"] == body.reward_id), None)
-        channel_id = state["channelId"]
-        break
-    if reward is None:
-        raise HTTPException(400, "reward not found / no usable account login")
+        if reward is None:
+            try:
+                state = redeem_mod.fetch_channel_points(token, proxies, channel)
+            except redeem_mod.RedeemError:
+                continue
+            reward = next((r for r in state["rewards"] if r["id"] == body.reward_id), None)
+            channel_id = state["channelId"]
+            if reward is None:
+                raise HTTPException(404, "reward not found on this channel")
+        candidates.append((acc.id, acc.username, token, proxies))
 
-    results = []
-    eligible = []
-    for acc in accounts:
-        rem = redeem_mod.cooldown_remaining(acc.id, body.reward_id)
-        if rem > 0:
-            results.append({"account": acc.username, "ok": False,
-                            "message": f"Cooldown ({int(rem)}s)"})
-            continue
-        eligible.append(acc)
+    if reward is None or not candidates:
+        raise HTTPException(400, "no usable account login")
 
-    for i, acc in enumerate(eligible):
-        try:
-            token, proxies = redeem_mod.account_creds(session, acc)
-        except redeem_mod.RedeemError as e:
-            results.append({"account": acc.username, "ok": False, "message": str(e)})
-            continue
-        r = redeem_mod.redeem_reward(token, proxies, channel_id, reward, body.prompt)
-        if r["ok"]:
-            redeem_mod.set_account_cooldown(acc.id, reward["id"], cd_secs)
-        results.append({"account": acc.username, "ok": r["ok"],
-                        "message": r.get("message"), "redemptionId": r.get("redemptionId")})
-        if i < len(eligible) - 1 and delay > 0:
-            time.sleep(min(delay, 30))  # internal delay between accounts
-
-    return {
-        "reward": reward["title"],
-        "accounts": len(accounts),
-        "succeeded": sum(1 for r in results if r["ok"]),
-        "results": results,
-    }
+    count = body.count if body.count and body.count > 0 else len(candidates)
+    count = min(count, 500)
+    redeem_mod.schedule_master_redeem(
+        channel_id, reward, candidates, cd_secs, gdelay, count, _log_event
+    )
+    return {"reward": reward["title"], "accounts": len(candidates),
+            "scheduled": count, "global_delay": gdelay}
 
 
 class RedeemRequest(BaseModel):
