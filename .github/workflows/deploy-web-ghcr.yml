@@ -58,6 +58,11 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           platforms: linux/amd64
+          # Push a plain single-image manifest (no OCI index / attestation manifest).
+          # The buildx default provenance attestation produces an index with an
+          # 'unknown/unknown' entry that breaks Unraid's port detection / WebUI link.
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
