@@ -69,6 +69,10 @@ nicht gebaut. Accounts legt der Nutzer selbst an; die UI importiert/verwaltet si
   (Streamer-Liste + generisch), System-Router (start-all/stop-all/running), gemeinsames `proxy_util`.
   Getestet: alle CRUD, 5-pro-Proxy-409, Duplikat-409, Proxy-in-use-409, Passwort nie in Response,
   Login-Flow, Login-Test ohne Cookie, Start/Stop.
-- Phasen 5–7: noch nicht implementiert.
+- ✅ **Phase 5 fertig** (2026-06-16): WebSocket-Router (`ws.py`): `/ws/logs/{username}` (Tail + Live),
+  `/ws/status` (alle Account-Status alle 2s), `/ws/events` (neue Events live). REST-History
+  (`metrics.py`): `/api/accounts/{id}/points` (Balance-Serie), `/api/accounts/{id}/events`. Getestet:
+  Status-Push, Live-Events, Log-Tail+Live-Zeile, Punkte-Serie, 404.
+- Phasen 6–7: noch nicht implementiert.
 - Vorhandenes Fundament (frühere Session, uncommittet): `run.py`, `docker-entrypoint.sh`,
   `Dockerfile.unraid`, `docker-compose.yml`, `start_all.sh`/`stop_all.sh`, `UNRAID.md`, `.gitignore`.

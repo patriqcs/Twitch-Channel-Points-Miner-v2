@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend import config
 from backend.db import init_db
 from backend.manager import manager
-from backend.routers import accounts, internal, proxies, settings, system
+from backend.routers import accounts, internal, metrics, proxies, settings, system, ws
 
 logger = logging.getLogger("backend")
 
@@ -47,6 +47,8 @@ app.include_router(accounts.router)
 app.include_router(proxies.router)
 app.include_router(settings.router)
 app.include_router(system.router)
+app.include_router(metrics.router)
+app.include_router(ws.router)
 
 
 @app.get("/api/health")
