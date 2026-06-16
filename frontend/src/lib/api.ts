@@ -33,6 +33,7 @@ export interface ProxyTestResult {
 export interface ProxyImportResult {
   added: number;
   skipped_duplicate: number;
+  skipped_offline: number;
   failed: number;
   errors: { line: number; value: string; error: string }[];
   proxies: Proxy[];
@@ -108,10 +109,10 @@ export const api = {
   listProxies: () => req<Proxy[]>("/api/proxies"),
   createProxy: (b: Record<string, unknown>) =>
     req<Proxy>("/api/proxies", { method: "POST", body: JSON.stringify(b) }),
-  importProxies: (text: string) =>
+  importProxies: (text: string, testBeforeAdd: boolean) =>
     req<ProxyImportResult>("/api/proxies/import", {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, test_before_add: testBeforeAdd }),
     }),
   testAllProxies: () =>
     req<(ProxyTestResult & { id: number; name: string })[]>("/api/proxies/test-all", {

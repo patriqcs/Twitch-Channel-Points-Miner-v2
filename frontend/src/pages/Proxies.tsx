@@ -18,11 +18,12 @@ export default function Proxies() {
 
   const [showImport, setShowImport] = useState(false);
   const [importText, setImportText] = useState("");
+  const [testOnImport, setTestOnImport] = useState(true);
   const [importResult, setImportResult] = useState<ProxyImportResult | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const importMut = useMutation({
-    mutationFn: () => api.importProxies(importText),
+    mutationFn: () => api.importProxies(importText, testOnImport),
     onSuccess: (r) => { setImportResult(r); setImportText(""); invalidate(); },
     onError: (e: Error) => setErr(e.message),
   });
@@ -209,6 +210,11 @@ export default function Proxies() {
             value={importText}
             onChange={(e) => setImportText(e.target.value)}
           />
+          <label className="flex items-center gap-2 text-sm text-zinc-300">
+            <input type="checkbox" checked={testOnImport}
+              onChange={(e) => setTestOnImport(e.target.checked)} />
+            Vor dem Hinzufügen testen – nur funktionierende übernehmen
+          </label>
           <div className="flex items-center gap-2">
             <input ref={fileInput} type="file" accept=".txt,text/plain"
               className="hidden" onChange={onPickFile} />
@@ -218,7 +224,7 @@ export default function Proxies() {
             <Button className="ml-auto"
               disabled={!importText.trim() || importMut.isPending}
               onClick={() => importMut.mutate()}>
-              Importieren
+              {importMut.isPending ? (testOnImport ? "teste & importiere…" : "importiere…") : "Importieren"}
             </Button>
           </div>
 
@@ -226,6 +232,10 @@ export default function Proxies() {
             <div className="space-y-2 rounded-md border border-zinc-700 bg-zinc-900/50 p-3 text-sm">
               <div>
                 <span className="text-emerald-400">✅ {importResult.added} hinzugefügt</span>
+                {" · "}
+                <span className={importResult.skipped_offline ? "text-amber-400" : "text-zinc-400"}>
+                  {importResult.skipped_offline} offline
+                </span>
                 {" · "}
                 <span className="text-zinc-400">{importResult.skipped_duplicate} Duplikate</span>
                 {" · "}

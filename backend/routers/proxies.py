@@ -74,6 +74,7 @@ def import_proxies(payload: ProxyImport, session: Session = Depends(get_session)
     }
 
     result = ProxyImportResult()
+    candidates = []  # engine proxies that parsed and are not duplicates
     for idx, raw in enumerate(payload.text.splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -90,7 +91,24 @@ def import_proxies(payload: ProxyImport, session: Session = Depends(get_session)
             result.skipped_duplicate += 1
             continue
         seen.add(key)
+        candidates.append(ep)
 
+    # Optionally connectivity-test all candidates first; keep only the working ones.
+    if payload.test_before_add and candidates:
+        def _alive(ep):
+            try:
+                return bool(ep.test_proxy(timeout=_TEST_TIMEOUT).get("ok"))
+            except Exception:  # noqa: BLE001
+                return False
+
+        with ThreadPoolExecutor(max_workers=min(_TEST_WORKERS, len(candidates))) as pool:
+            alive_flags = list(pool.map(_alive, candidates))
+        keep = [ep for ep, ok in zip(candidates, alive_flags) if ok]
+        result.skipped_offline = len(candidates) - len(keep)
+    else:
+        keep = candidates
+
+    for ep in keep:
         p = Proxy(
             name=f"{ep.host}:{ep.port}",
             scheme=ep.scheme,

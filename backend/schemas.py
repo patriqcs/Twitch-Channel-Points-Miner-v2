@@ -70,6 +70,9 @@ class ProxyImport(BaseModel):
     # One proxy per line: "scheme://[user:pass@]host:port" or bare "host:port".
     # Blank lines and lines starting with '#' are ignored.
     text: str
+    # When true, every (new, non-duplicate) proxy is connectivity-tested and only
+    # the working ones are stored; dead ones are counted as skipped_offline.
+    test_before_add: bool = True
 
 
 class ProxyImportError(BaseModel):
@@ -81,7 +84,8 @@ class ProxyImportError(BaseModel):
 class ProxyImportResult(BaseModel):
     added: int = 0
     skipped_duplicate: int = 0
-    failed: int = 0
+    skipped_offline: int = 0  # parsed fine but failed the connectivity test
+    failed: int = 0  # could not be parsed
     errors: List[ProxyImportError] = []
     proxies: List[ProxyRead] = []
 
