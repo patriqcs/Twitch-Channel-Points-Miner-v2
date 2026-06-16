@@ -64,9 +64,9 @@ class ProxyHealthMonitor:
                 logger.exception("proxy monitor tick failed")
 
     @staticmethod
-    def _probe(p: Proxy) -> bool:
+    def _probe_ep(ep) -> bool:
         try:
-            return bool(to_engine_proxy(p).test_proxy(timeout=8).get("ok"))
+            return bool(ep.test_proxy(timeout=8).get("ok"))
         except Exception:  # noqa: BLE001
             return False
 
@@ -82,110 +82,96 @@ class ProxyHealthMonitor:
         return set(rows)
 
     def _tick(self) -> None:
+        # Phase 1 — snapshot (SHORT db session): copy everything we need into plain
+        # data + detached engine-proxy objects, then release the connection BEFORE
+        # doing any network probing (probing dead proxies can take many seconds and
+        # must never hold a pooled DB connection — that exhausted the pool).
         with Session(engine) as session:
-            proxies = {p.id: p for p in session.exec(select(Proxy)).all()}
-            accounts = session.exec(select(Account)).all()
-            if not proxies and not any(a.proxy_id for a in accounts):
-                return  # nothing proxy-related to manage
-
-            usage: dict[int, int] = {}
-            for a in accounts:
-                if a.proxy_id is not None:
-                    usage[a.proxy_id] = usage.get(a.proxy_id, 0) + 1
-
+            proxies = {}  # id -> {"ep": EngineProxy, "label": str}
+            for p in session.exec(select(Proxy)).all():
+                proxies[p.id] = {"ep": to_engine_proxy(p),
+                                 "label": f"{p.scheme}://{p.host}:{p.port}"}
+            accts = [(a.id, a.username, a.proxy_id)
+                     for a in session.exec(select(Account)).all()]
             errored = self._recent_proxy_errors(session)
-            tested: dict[int, bool] = {}
 
-            def healthy(pid: int) -> bool:
-                if pid not in tested:
-                    p = proxies.get(pid)
-                    tested[pid] = self._probe(p) if p else False
-                return tested[pid]
+        if not proxies and not any(pid for _, _, pid in accts):
+            return
 
-            def pick_replacement(exclude_id: int | None) -> Proxy | None:
-                cands = [
-                    p for pid, p in proxies.items()
-                    if pid != exclude_id
-                    and usage.get(pid, 0) < config.MAX_ACCOUNTS_PER_PROXY
-                ]
-                cands.sort(key=lambda p: usage.get(p.id, 0))  # least-loaded first
-                for p in cands:
-                    if healthy(p.id):
-                        return p
-                return None
+        usage: dict[int, int] = {}
+        for _, _, pid in accts:
+            if pid is not None:
+                usage[pid] = usage.get(pid, 0) + 1
 
-            for acc in accounts:
-                if not self.manager.is_running(acc.username):
-                    self._fails.pop(acc.username, None)
+        # Phase 2 — probe + decide (NO db connection held)
+        tested: dict[int, bool] = {}
+
+        def healthy(pid: int) -> bool:
+            if pid not in tested:
+                m = proxies.get(pid)
+                tested[pid] = self._probe_ep(m["ep"]) if m else False
+            return tested[pid]
+
+        def pick_replacement(exclude_id):
+            cands = [pid for pid in proxies
+                     if pid != exclude_id and usage.get(pid, 0) < config.MAX_ACCOUNTS_PER_PROXY]
+            cands.sort(key=lambda pid: usage.get(pid, 0))
+            for pid in cands:
+                if healthy(pid):
+                    return pid
+            return None
+
+        decisions = []  # (account_id, username, new_proxy_id|keep, change_bool, message)
+        for aid, uname, pid in accts:
+            if not self.manager.is_running(uname):
+                self._fails.pop(uname, None)
+                continue
+            if pid is not None:
+                if healthy(pid) and aid not in errored:
+                    self._fails[uname] = 0
                     continue
-
-                if acc.proxy_id is not None:
-                    probe_ok = healthy(acc.proxy_id)
-                    runtime_bad = acc.id in errored
-                    if probe_ok and not runtime_bad:
-                        self._fails[acc.username] = 0
-                        continue
-
-                    # count consecutive failures; a runtime error escalates now
-                    n = self._fails.get(acc.username, 0) + 1
-                    self._fails[acc.username] = n
-                    if not runtime_bad and n < config.PROXY_FAIL_THRESHOLD:
-                        continue
-
-                    old_id = acc.proxy_id
-                    repl = pick_replacement(exclude_id=old_id)
-                    if repl is not None:
-                        usage[old_id] = max(0, usage.get(old_id, 1) - 1)
-                        usage[repl.id] = usage.get(repl.id, 0) + 1
-                        acc.proxy_id = repl.id
-                        self._failover(session, acc, repl, old_id, runtime_bad)
-                    elif config.PROXY_ALLOW_DIRECT:
-                        usage[old_id] = max(0, usage.get(old_id, 1) - 1)
-                        acc.proxy_id = None
-                        self._record(
-                            session, acc,
-                            f"proxy #{old_id} dead and no working proxy free "
-                            f"-> running WITHOUT proxy (last resort)",
-                        )
-                        session.add(acc)
-                        session.commit()
-                        self._fails[acc.username] = 0
-                        self.manager.restart(acc.username)
-                    else:
-                        self._record(
-                            session, acc,
-                            f"proxy #{old_id} dead, no replacement and direct "
-                            f"disabled -> keeping (will retry)",
-                        )
-                        session.commit()
+                runtime_bad = aid in errored
+                n = self._fails.get(uname, 0) + 1
+                self._fails[uname] = n
+                if not runtime_bad and n < config.PROXY_FAIL_THRESHOLD:
+                    continue
+                repl = pick_replacement(pid)
+                why = "runtime errors" if runtime_bad else "probe failed"
+                if repl is not None:
+                    usage[pid] = max(0, usage.get(pid, 1) - 1)
+                    usage[repl] = usage.get(repl, 0) + 1
+                    decisions.append((aid, uname, repl, True,
+                                      f"proxy #{pid} dead ({why}) -> {proxies[repl]['label']} (#{repl})"))
+                    self._fails[uname] = 0
+                elif config.PROXY_ALLOW_DIRECT:
+                    usage[pid] = max(0, usage.get(pid, 1) - 1)
+                    decisions.append((aid, uname, None, True,
+                                      f"proxy #{pid} dead ({why}), none free -> WITHOUT proxy"))
+                    self._fails[uname] = 0
                 else:
-                    # running direct: re-attach a working proxy once one is free
-                    repl = pick_replacement(exclude_id=None)
-                    if repl is not None:
-                        usage[repl.id] = usage.get(repl.id, 0) + 1
-                        acc.proxy_id = repl.id
-                        self._record(
-                            session, acc,
-                            f"working proxy available -> attached "
-                            f"{repl.scheme}://{repl.host}:{repl.port} (#{repl.id})",
-                        )
+                    decisions.append((aid, uname, None, False,
+                                      f"proxy #{pid} dead, no replacement (direct disabled)"))
+            else:
+                repl = pick_replacement(None)
+                if repl is not None:
+                    usage[repl] = usage.get(repl, 0) + 1
+                    decisions.append((aid, uname, repl, True,
+                                      f"working proxy available -> attached {proxies[repl]['label']} (#{repl})"))
+
+        if not decisions:
+            return
+
+        # Phase 3 — apply (SHORT db session) + restart affected miners
+        with Session(engine) as session:
+            for aid, uname, new_pid, change, msg in decisions:
+                if change:
+                    acc = session.get(Account, aid)
+                    if acc is not None:
+                        acc.proxy_id = new_pid
                         session.add(acc)
-                        session.commit()
-                        self.manager.restart(acc.username)
-
-    # ---- helpers ----
-    def _failover(self, session, acc, repl, old_id, runtime_bad) -> None:
-        why = "runtime errors" if runtime_bad else "probe failed"
-        self._record(
-            session, acc,
-            f"proxy #{old_id} dead ({why}) -> switched to "
-            f"{repl.scheme}://{repl.host}:{repl.port} (#{repl.id})",
-        )
-        session.add(acc)
-        session.commit()
-        self._fails[acc.username] = 0
-        self.manager.restart(acc.username)
-
-    def _record(self, session: Session, acc: Account, message: str) -> None:
-        logger.info("[%s] %s", acc.username, message)
-        session.add(Event(account_id=acc.id, type="proxy", message=message))
+                session.add(Event(account_id=aid, type="proxy", message=msg))
+            session.commit()
+        for aid, uname, new_pid, change, msg in decisions:
+            logger.info("[%s] %s", uname, msg)
+            if change:
+                self.manager.restart(uname)

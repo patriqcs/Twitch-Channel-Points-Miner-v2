@@ -61,18 +61,21 @@ def _autostart_when_ready() -> None:
     from backend.proxy_util import to_engine_proxy
 
     def _proxies_ready() -> bool:
+        # Build detached engine proxies INSIDE the session, then probe OUTSIDE it
+        # (don't hold a pooled connection during network I/O; avoid detached-load).
         with Session(engine) as session:
             pids = {
                 a.proxy_id for a in session.exec(
                     select(Account).where(Account.enabled == True)  # noqa: E712
                 ).all() if a.proxy_id is not None
             }
-            proxies = [session.get(Proxy, pid) for pid in pids]
-        if not proxies:
+            eps = [to_engine_proxy(session.get(Proxy, pid)) for pid in pids]
+        eps = [e for e in eps if e is not None]
+        if not eps:
             return True  # direct mining: nothing to wait for
-        for p in proxies:
+        for ep in eps:
             try:
-                if to_engine_proxy(p).test_proxy(timeout=6).get("ok"):
+                if ep.test_proxy(timeout=6).get("ok"):
                     return True  # shared tunnel up -> relays reachable
             except Exception:  # noqa: BLE001
                 pass

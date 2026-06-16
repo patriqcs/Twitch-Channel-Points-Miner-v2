@@ -15,6 +15,13 @@ engine = create_engine(
     f"sqlite:///{config.DB_PATH}",
     echo=False,
     connect_args={"check_same_thread": False},
+    # The default pool (5 + 10 overflow) is too small for the WS streams +
+    # background threads (monitor/scheduler/pruner) + parallel requests, and
+    # exhausted under load. SQLite file connections are cheap, so allow many.
+    pool_size=20,
+    max_overflow=40,
+    pool_timeout=30,
+    pool_recycle=1800,
 )
 
 
