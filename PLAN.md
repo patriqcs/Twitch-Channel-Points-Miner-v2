@@ -57,6 +57,12 @@ nicht gebaut. Accounts legt der Nutzer selbst an; die UI importiert/verwaltet si
   Key in DATA_DIR/secret.key chmod 600), `db.py` (SQLite+WAL+FK), `config.py` (alles unter DATA_DIR),
   `schemas.py`, `migrate.py` (idempotent aus accounts.txt/streamers.txt). Getestet: Crypto-Roundtrip,
   WAL, Relationships, Unique-Constraint, Migration-Idempotenz, Health.
-- Phasen 3–7: noch nicht implementiert.
+- ✅ **Phase 3 fertig** (2026-06-16): `MinerManager` (`backend/manager.py`, Popen-Subprozess pro
+  Account in eigener Prozessgruppe, start/stop/restart/start_all/stop_all, Reaper-Thread, sauberer
+  SIGTERM→SIGKILL-Stop), `miner_runner.py` (Config-Fetch vom Backend mit Fallback, Reporter-Thread
+  für Status + Punkte-Snapshots), interner Router (`/internal/config`, `/internal/events`,
+  Token-geschützt). Getestet: Token-Auth, Config mit entschlüsselter Proxy-URL, Event-Recording +
+  Status-Update, Prozess-Start/Stop/Doppelstart-Schutz/Reaper.
+- Phasen 4–7: noch nicht implementiert.
 - Vorhandenes Fundament (frühere Session, uncommittet): `run.py`, `docker-entrypoint.sh`,
   `Dockerfile.unraid`, `docker-compose.yml`, `start_all.sh`/`stop_all.sh`, `UNRAID.md`, `.gitignore`.

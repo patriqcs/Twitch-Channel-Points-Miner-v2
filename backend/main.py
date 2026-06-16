@@ -12,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend import config
 from backend.db import init_db
+from backend.manager import manager
+from backend.routers import internal
 
 logger = logging.getLogger("backend")
 
@@ -20,8 +22,12 @@ logger = logging.getLogger("backend")
 async def lifespan(app: FastAPI):
     config.ensure_dirs()
     init_db()
+    manager.start_reaper()
     logger.info("Backend ready. Data dir: %s", config.DATA_DIR)
-    yield
+    try:
+        yield
+    finally:
+        manager.shutdown()
 
 
 app = FastAPI(title="Twitch Miner Manager", version="0.1.0", lifespan=lifespan)
@@ -34,6 +40,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+app.include_router(internal.router)
 
 
 @app.get("/api/health")
