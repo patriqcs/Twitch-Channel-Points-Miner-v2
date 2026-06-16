@@ -63,6 +63,12 @@ nicht gebaut. Accounts legt der Nutzer selbst an; die UI importiert/verwaltet si
   für Status + Punkte-Snapshots), interner Router (`/internal/config`, `/internal/events`,
   Token-geschützt). Getestet: Token-Auth, Config mit entschlüsselter Proxy-URL, Event-Recording +
   Status-Update, Prozess-Start/Stop/Doppelstart-Schutz/Reaper.
-- Phasen 4–7: noch nicht implementiert.
+- ✅ **Phase 4 fertig** (2026-06-16): Login-Service (`login_service.py`, Device-Code-Flow für die UI,
+  proxy-aware, schreibt Cookie), Accounts-Router (CRUD, start/stop/restart, login + login/status +
+  login-test, 5-pro-Proxy-Regel), Proxys-Router (CRUD + /test mit Exit-IP+Latenz), Settings-Router
+  (Streamer-Liste + generisch), System-Router (start-all/stop-all/running), gemeinsames `proxy_util`.
+  Getestet: alle CRUD, 5-pro-Proxy-409, Duplikat-409, Proxy-in-use-409, Passwort nie in Response,
+  Login-Flow, Login-Test ohne Cookie, Start/Stop.
+- Phasen 5–7: noch nicht implementiert.
 - Vorhandenes Fundament (frühere Session, uncommittet): `run.py`, `docker-entrypoint.sh`,
   `Dockerfile.unraid`, `docker-compose.yml`, `start_all.sh`/`stop_all.sh`, `UNRAID.md`, `.gitignore`.
