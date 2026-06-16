@@ -32,10 +32,7 @@ _TEST_WORKERS = 20
 router = APIRouter(prefix="/api/proxies", tags=["proxies"])
 
 
-def _to_read(session: Session, p: Proxy) -> ProxyRead:
-    count = session.exec(
-        select(func.count()).select_from(Account).where(Account.proxy_id == p.id)
-    ).one()
+def _to_read(p: Proxy, count: int = 0) -> ProxyRead:
     return ProxyRead(
         id=p.id, name=p.name, scheme=p.scheme, host=p.host, port=p.port,
         username=p.username, has_password=bool(p.password_enc),
@@ -43,9 +40,26 @@ def _to_read(session: Session, p: Proxy) -> ProxyRead:
     )
 
 
+def _counts(session: Session) -> dict:
+    """All proxy_id -> account_count in ONE query (avoids an N+1 count per proxy)."""
+    rows = session.exec(
+        select(Account.proxy_id, func.count())
+        .where(Account.proxy_id.is_not(None))
+        .group_by(Account.proxy_id)
+    ).all()
+    return {pid: n for pid, n in rows}
+
+
+def _count_for(session: Session, proxy_id: int) -> int:
+    return session.exec(
+        select(func.count()).select_from(Account).where(Account.proxy_id == proxy_id)
+    ).one()
+
+
 @router.get("", response_model=list[ProxyRead])
 def list_proxies(session: Session = Depends(get_session)):
-    return [_to_read(session, p) for p in session.exec(select(Proxy)).all()]
+    counts = _counts(session)
+    return [_to_read(p, counts.get(p.id, 0)) for p in session.exec(select(Proxy)).all()]
 
 
 @router.post("", response_model=ProxyRead, status_code=201)
@@ -58,7 +72,7 @@ def create_proxy(payload: ProxyCreate, session: Session = Depends(get_session)):
     session.add(p)
     session.commit()
     session.refresh(p)
-    return _to_read(session, p)
+    return _to_read(p, 0)
 
 
 @router.post("/import", response_model=ProxyImportResult, status_code=201)
@@ -122,7 +136,7 @@ def import_proxies(payload: ProxyImport, session: Session = Depends(get_session)
         )
         session.add(p)
         session.flush()  # assign id without committing each row individually
-        result.proxies.append(_to_read(session, p))
+        result.proxies.append(_to_read(p, 0))
         result.added += 1
 
     session.commit()
@@ -177,7 +191,7 @@ def import_mullvad(payload: MullvadImport, session: Session = Depends(get_sessio
                   scheme="socks5", host=host, port=port)
         session.add(p)
         session.flush()
-        result.proxies.append(_to_read(session, p))
+        result.proxies.append(_to_read(p, 0))
         result.added += 1
 
     session.commit()
@@ -244,7 +258,7 @@ def update_proxy(proxy_id: int, payload: ProxyUpdate,
     session.add(p)
     session.commit()
     session.refresh(p)
-    return _to_read(session, p)
+    return _to_read(p, _count_for(session, p.id))
 
 
 @router.delete("/{proxy_id}", status_code=204)

@@ -93,6 +93,40 @@ def _autostart_when_ready() -> None:
     threading.Thread(target=_run, name="autostart", daemon=True).start()
 
 
+def _start_event_pruner() -> None:
+    """Hourly: delete high-volume points_snapshot events older than the retention."""
+    import threading
+    import time
+    from datetime import timedelta
+
+    from sqlalchemy import delete
+    from sqlmodel import Session
+    from backend.db import engine
+    from backend.models import Event, utcnow
+
+    if config.EVENT_RETENTION_DAYS <= 0:
+        return
+
+    def _run():
+        while True:
+            try:
+                cutoff = utcnow() - timedelta(days=config.EVENT_RETENTION_DAYS)
+                with Session(engine) as session:
+                    res = session.execute(
+                        delete(Event).where(
+                            Event.type == "points_snapshot", Event.ts < cutoff
+                        )
+                    )
+                    session.commit()
+                    if res.rowcount:
+                        logger.info("Pruned %d old points_snapshot events", res.rowcount)
+            except Exception:  # noqa: BLE001
+                logger.exception("event pruning failed")
+            time.sleep(3600)
+
+    threading.Thread(target=_run, name="event-pruner", daemon=True).start()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config.ensure_dirs()
@@ -105,6 +139,7 @@ async def lifespan(app: FastAPI):
         _autostart_when_ready()
         logger.info("Auto-start armed (waits until proxies reachable, max %ss).",
                     config.AUTOSTART_MAX_WAIT)
+    _start_event_pruner()
     logger.info("Backend ready. Data dir: %s", config.DATA_DIR)
     try:
         yield

@@ -61,6 +61,11 @@ PROXY_ALLOW_DIRECT = _bool_env("PROXY_ALLOW_DIRECT", True)
 AUTOSTART_ENABLED = _bool_env("AUTOSTART_ENABLED", True)
 AUTOSTART_MAX_WAIT = int(os.environ.get("AUTOSTART_MAX_WAIT", "180"))  # seconds
 
+# ---- Event retention ----
+# points_snapshot events are written every ~60s per account and would grow the
+# DB forever; prune the high-volume ones older than this many days (0 = keep all).
+EVENT_RETENTION_DAYS = int(os.environ.get("EVENT_RETENTION_DAYS", "14"))
+
 
 def ensure_dirs() -> None:
     """Create all required directories (idempotent)."""

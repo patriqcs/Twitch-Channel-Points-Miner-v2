@@ -33,11 +33,15 @@ def account_points(account_id: int, limit: int = 500,
     """Points-balance time series (from points_snapshot events)."""
     if session.get(Account, account_id) is None:
         raise HTTPException(404, "account not found")
+    # newest N (DESC + limit), then back to chronological order for the chart —
+    # otherwise once there are >limit snapshots we'd return the OLDEST ones and
+    # the "current points" / chart would freeze on stale data.
     rows = session.exec(
         select(Event).where(Event.account_id == account_id)
         .where(Event.type == "points_snapshot")
-        .order_by(asc(Event.ts)).limit(min(limit, 5000))
+        .order_by(desc(Event.ts)).limit(min(limit, 5000))
     ).all()
+    rows.reverse()
     return [
         {"ts": e.ts.isoformat() if e.ts else None, "balance": e.balance}
         for e in rows
