@@ -1,11 +1,12 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { LayoutDashboard, Users, Network, Settings, ScrollText } from "lucide-react";
+import { LayoutDashboard, Users, Network, Settings, ScrollText, Gift } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/accounts", label: "Accounts", icon: Users },
   { to: "/proxies", label: "Proxys", icon: Network },
+  { to: "/redeem", label: "Einlösen", icon: Gift },
   { to: "/logs", label: "Logs", icon: ScrollText },
   { to: "/settings", label: "Einstellungen", icon: Settings },
 ];

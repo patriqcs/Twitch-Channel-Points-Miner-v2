@@ -18,7 +18,9 @@ from backend import config
 from backend.db import init_db
 from backend.manager import manager
 from backend.proxy_monitor import ProxyHealthMonitor
-from backend.routers import accounts, internal, metrics, proxies, settings, system, ws
+from backend.routers import (
+    accounts, internal, metrics, proxies, redeem, settings, system, ws,
+)
 
 FRONTEND_DIR = Path(
     os.environ.get("FRONTEND_DIR", config.PROJECT_ROOT / "frontend" / "dist")
@@ -59,6 +61,7 @@ app.add_middleware(
 app.include_router(internal.router)
 app.include_router(accounts.router)
 app.include_router(proxies.router)
+app.include_router(redeem.router)
 app.include_router(settings.router)
 app.include_router(system.router)
 app.include_router(metrics.router)

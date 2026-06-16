@@ -39,6 +39,17 @@ export interface ProxyImportResult {
   proxies: Proxy[];
 }
 
+export interface Reward {
+  id: string;
+  title: string;
+  cost: number;
+  isEnabled: boolean;
+  isPaused: boolean;
+  isInStock: boolean;
+  isUserInputRequired: boolean;
+  prompt: string;
+}
+
 export interface EventRow {
   id: number;
   type: string;
@@ -138,6 +149,17 @@ export const api = {
     req<void>(`/api/proxies/${id}`, { method: "DELETE" }),
   testProxy: (id: number) =>
     req<ProxyTestResult>(`/api/proxies/${id}/test`, { method: "POST" }),
+
+  // redeem (spend channel points on a custom reward, per account, via its proxy)
+  channelPoints: (id: number, channel: string) =>
+    req<{ channelId: string; displayName: string; balance: number; rewards: Reward[] }>(
+      `/api/redeem/${id}/channel-points?channel=${encodeURIComponent(channel)}`
+    ),
+  redeem: (id: number, body: { channel: string; reward_id: string; count: number; prompt?: string }) =>
+    req<{ reward: string; attempted: number; succeeded: number; results: { ok: boolean; message?: string }[] }>(
+      `/api/redeem/${id}`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
 
   // settings
   getStreamers: () => req<{ streamers: string[]; raw: string }>("/api/settings/streamers"),
