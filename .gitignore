@@ -155,3 +155,14 @@ analytics/*
 keep_replit_alive.py
 .replit
 replit.nix
+
+# Multi-account local files (never commit credentials)
+accounts.txt
+logs/
+.venv/
+
+# Unraid/Docker persistente Daten
+data/
+
+# Generic runner is part of this project (no credentials inside) -> override upstream ignore
+!run.py

@@ -1,0 +1,76 @@
+# Twitch Channel Points Miner – 10 Accounts, gleiche Streamer.
+# Für Unraid: Plugin "Docker Compose Manager" -> neuer Stack -> dieses File.
+#
+# Ein Service = ein Account = ein Container. Alle teilen sich EIN Image
+# (wird einmal aus dem Repo gebaut) und die GLEICHE streamers.txt.
+#
+# Persistente Daten liegen im Host-Ordner ./data (cookies, logs, analytics).
+# Den Account-Login (Geräte-Code) macht man einmalig – siehe UNRAID.md.
+
+x-miner: &miner
+  build:
+    context: .
+    dockerfile: Dockerfile.unraid   # schlankes amd64-Image (baut einmal, ~1-2 Min)
+  image: twitch-miner-multi:local
+  restart: unless-stopped
+  stdin_open: true               # damit der Erst-Login bequem im Vordergrund geht
+  tty: true
+  environment:
+    - TZ=Europe/Berlin
+  volumes:
+    - ./run.py:/usr/src/app/run.py:ro
+    - ./streamers.txt:/usr/src/app/streamers.txt:ro
+    - ./data/cookies:/usr/src/app/cookies         # Login-Cookies (1x erzeugt, bleiben erhalten)
+    - ./data/logs:/usr/src/app/logs
+    - ./data/analytics:/usr/src/app/analytics
+
+services:
+  twitch-acc01:
+    <<: *miner
+    container_name: twitch-acc01
+    command: ["mein-account-01"]   # <- Twitch-Username dieses Containers
+
+  twitch-acc02:
+    <<: *miner
+    container_name: twitch-acc02
+    command: ["mein-account-02"]
+
+  twitch-acc03:
+    <<: *miner
+    container_name: twitch-acc03
+    command: ["mein-account-03"]
+
+  twitch-acc04:
+    <<: *miner
+    container_name: twitch-acc04
+    command: ["mein-account-04"]
+
+  twitch-acc05:
+    <<: *miner
+    container_name: twitch-acc05
+    command: ["mein-account-05"]
+
+  twitch-acc06:
+    <<: *miner
+    container_name: twitch-acc06
+    command: ["mein-account-06"]
+
+  twitch-acc07:
+    <<: *miner
+    container_name: twitch-acc07
+    command: ["mein-account-07"]
+
+  twitch-acc08:
+    <<: *miner
+    container_name: twitch-acc08
+    command: ["mein-account-08"]
+
+  twitch-acc09:
+    <<: *miner
+    container_name: twitch-acc09
+    command: ["mein-account-09"]
+
+  twitch-acc10:
+    <<: *miner
+    container_name: twitch-acc10
+    command: ["mein-account-10"]

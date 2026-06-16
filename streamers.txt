@@ -1,0 +1,7 @@
+# Streamer-Liste – wird von ALLEN Accounts gemeinsam benutzt.
+# Ein Streamer-Username pro Zeile (so wie er in der URL twitch.tv/<name> steht).
+# Zeilen mit # und leere Zeilen werden ignoriert. Reihenfolge = Priorität.
+
+streamer-username01
+streamer-username02
+streamer-username03

@@ -1,0 +1,17 @@
+# Schlankes amd64-Image für Unraid (kein QEMU/Rust-Cross-Build nötig).
+FROM python:3.11-slim
+
+WORKDIR /usr/src/app
+
+# Abhängigkeiten (alle als fertige Wheels -> kein Compiler nötig)
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Miner-Code + Runner + Entrypoint
+COPY TwitchChannelPointsMiner ./TwitchChannelPointsMiner
+COPY run.py streamers.txt docker-entrypoint.sh ./
+RUN chmod +x docker-entrypoint.sh
+
+# Entrypoint wählt automatisch Multi- (ENV ACCOUNTS) oder Single-Modus.
+# -u sorgt für ungepufferte Logs, damit Login-Codes sofort sichtbar sind.
+ENTRYPOINT ["./docker-entrypoint.sh"]
