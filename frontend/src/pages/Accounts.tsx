@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play, Square, RotateCw, Trash2, LogIn, Plus, KeyRound } from "lucide-react";
+import { Play, Square, RotateCw, Trash2, LogIn, Plus, KeyRound, Cookie, Copy } from "lucide-react";
 import { api, type Account, type LoginStart } from "@/lib/api";
 import { Button, Card, Input, Modal, StatusBadge } from "@/components/ui";
 import { fmtTime } from "@/lib/utils";
@@ -16,6 +16,7 @@ export default function Accounts() {
   const [newUser, setNewUser] = useState("");
   const [newProxy, setNewProxy] = useState<string>("");
   const [login, setLogin] = useState<{ account: Account; data: LoginStart } | null>(null);
+  const [token, setToken] = useState<{ username: string; value: string | null; error: string | null } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const create = useMutation({
@@ -106,6 +107,15 @@ export default function Accounts() {
                 }}>
                 <KeyRound size={14} />
               </Button>
+              <Button size="sm" variant="ghost" title="auth-token anzeigen"
+                onClick={async () => {
+                  try {
+                    const r = await api.authToken(a.id);
+                    setToken({ username: a.username, value: r.auth_token, error: r.error });
+                  } catch (er) { setErr((er as Error).message); }
+                }}>
+                <Cookie size={14} />
+              </Button>
               <Button size="sm" variant="danger" title="Löschen"
                 onClick={async () => {
                   if (confirm(`Account ${a.username} löschen?`)) {
@@ -147,6 +157,32 @@ export default function Accounts() {
       </Modal>
 
       {login && <LoginModal info={login} onClose={() => { setLogin(null); invalidate(); }} />}
+
+      {token && (
+        <Modal open onClose={() => setToken(null)} title={`auth-token: ${token.username}`}>
+          <div className="space-y-3">
+            {token.value ? (
+              <>
+                <p className="text-xs text-amber-400">
+                  ⚠️ Sensibel — das ist ein vollwertiger Account-Zugang. Nicht öffentlich teilen.
+                </p>
+                <textarea
+                  readOnly
+                  className="h-24 w-full break-all rounded-md border border-zinc-700 bg-zinc-950 p-2 font-mono text-xs"
+                  value={token.value}
+                  onFocus={(e) => e.currentTarget.select()}
+                />
+                <Button className="w-full" variant="outline"
+                  onClick={() => { navigator.clipboard?.writeText(token.value!); setErr("auth-token kopiert"); }}>
+                  <Copy size={14} /> Kopieren
+                </Button>
+              </>
+            ) : (
+              <p className="text-red-400">❌ {token.error ?? "kein auth-token gefunden"}</p>
+            )}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

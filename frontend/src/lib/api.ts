@@ -100,6 +100,10 @@ export const api = {
     req<{ ok: boolean; error: string | null }>(`/api/accounts/${id}/login-test`, {
       method: "POST",
     }),
+  authToken: (id: number) =>
+    req<{ auth_token: string | null; error: string | null }>(
+      `/api/accounts/${id}/auth-token`
+    ),
   accountPoints: (id: number) =>
     req<{ ts: string; balance: number | null }[]>(`/api/accounts/${id}/points`),
   accountEvents: (id: number) =>

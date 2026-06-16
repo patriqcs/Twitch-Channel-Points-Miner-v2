@@ -169,3 +169,27 @@ def login_test(account_id: int, session: Session = Depends(get_session)):
         return {"ok": ok, "error": None if ok else "cookie invalid or expired"}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": str(e)}
+
+
+@router.get("/{account_id}/auth-token")
+def get_auth_token(account_id: int, session: Session = Depends(get_session)):
+    """Return this account's stored Twitch 'auth-token' cookie value.
+
+    SENSITIVE: the auth-token is a full account credential. Only expose the WebUI
+    to trusted networks (or behind Cloudflare Access).
+    """
+    import pickle
+
+    acc = _get(session, account_id)
+    cookie = config.COOKIES_DIR / f"{acc.username}.pkl"
+    if not cookie.exists():
+        return {"auth_token": None, "error": "no cookie - login required"}
+    try:
+        with open(cookie, "rb") as f:
+            cookies = pickle.load(f)
+    except Exception as e:  # noqa: BLE001
+        return {"auth_token": None, "error": f"could not read cookie: {e}"}
+    for c in cookies or []:
+        if isinstance(c, dict) and c.get("name") == "auth-token":
+            return {"auth_token": c.get("value"), "error": None}
+    return {"auth_token": None, "error": "auth-token not found in cookie"}
