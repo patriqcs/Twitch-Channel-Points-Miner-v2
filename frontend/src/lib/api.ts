@@ -168,11 +168,11 @@ export const api = {
   getCooldowns: () =>
     req<{ account_id: number; reward_id: string; remaining: number }[]>("/api/redeem/cooldowns"),
   getRedeemConfig: () =>
-    req<{ channel: string; cooldowns: Record<string, number>; master_delays: Record<string, number>; all_delay: number }>(
+    req<{ channel: string; cooldowns: Record<string, number>; master_delays: Record<string, number>; counts: Record<string, number>; all_delay: number }>(
       "/api/redeem/config"
     ),
-  putRedeemConfig: (body: { channel?: string; cooldowns?: Record<string, number>; master_delays?: Record<string, number>; all_delay?: number }) =>
-    req<{ channel: string; cooldowns: Record<string, number>; master_delays: Record<string, number>; all_delay: number }>(
+  putRedeemConfig: (body: { channel?: string; cooldowns?: Record<string, number>; master_delays?: Record<string, number>; counts?: Record<string, number>; all_delay?: number }) =>
+    req<{ channel: string; cooldowns: Record<string, number>; master_delays: Record<string, number>; counts: Record<string, number>; all_delay: number }>(
       "/api/redeem/config",
       { method: "PUT", body: JSON.stringify(body) }
     ),

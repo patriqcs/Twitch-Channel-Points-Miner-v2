@@ -25,6 +25,7 @@ CHANNEL_KEY = "REDEEM_CHANNEL"
 COOLDOWNS_KEY = "REDEEM_COOLDOWNS"        # JSON {reward_id: sec} per-account cooldown (all accounts)
 ALL_DELAY_KEY = "REDEEM_ALL_DELAY"        # default global spacing fallback
 MASTER_DELAYS_KEY = "REDEEM_MASTER_DELAYS"  # JSON {reward_id: sec} global spacing between any two fires
+COUNTS_KEY = "REDEEM_COUNTS"              # JSON {reward_id: count} how many to schedule for "all accounts"
 
 # ---- in-memory cooldown state (resets on restart) ----
 _cooldowns: dict = {}            # (account_id, reward_id) -> monotonic time when available again
@@ -55,15 +56,17 @@ def get_config(session: Session) -> dict:
         cooldowns = json.loads(raw) if raw else {}
     except ValueError:
         cooldowns = {}
-    raw_md = _get_setting(session, MASTER_DELAYS_KEY, "{}")
-    try:
-        master_delays = json.loads(raw_md) if raw_md else {}
-    except ValueError:
-        master_delays = {}
+    def _json(key):
+        raw = _get_setting(session, key, "{}")
+        try:
+            return json.loads(raw) if raw else {}
+        except ValueError:
+            return {}
     return {
         "channel": _get_setting(session, CHANNEL_KEY, "") or "",
         "cooldowns": cooldowns,
-        "master_delays": master_delays,
+        "master_delays": _json(MASTER_DELAYS_KEY),
+        "counts": _json(COUNTS_KEY),
         "all_delay": float(_get_setting(session, ALL_DELAY_KEY, "2") or 2),
     }
 

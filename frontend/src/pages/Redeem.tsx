@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Gift, Loader2, Users } from "lucide-react";
 import { api, type Reward } from "@/lib/api";
@@ -55,11 +55,25 @@ export default function Redeem() {
       setChannel(c.channel ?? "");
       setCooldowns(c.cooldowns ?? {});
       setMasterDelays(c.master_delays ?? {});
+      setAllCount(Object.fromEntries(
+        Object.entries(c.counts ?? {}).map(([k, v]) => [k, String(v)])
+      ));
     }).catch(() => {});
   }, []);
 
-  const saveConfig = (patch: { channel?: string; cooldowns?: Record<string, number>; master_delays?: Record<string, number> }) =>
+  const saveConfig = (patch: { channel?: string; cooldowns?: Record<string, number>; master_delays?: Record<string, number>; counts?: Record<string, number> }) =>
     api.putRedeemConfig(patch).catch((e) => setToast((e as Error).message));
+
+  // auto-load the saved channel's rewards once on open, so the persisted
+  // cooldown/spacing/count values are visible immediately (no manual reload).
+  const didAutoLoad = useRef(false);
+  useEffect(() => {
+    if (!didAutoLoad.current && channel.trim() && accounts.length > 0) {
+      didAutoLoad.current = true;
+      load();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel, accounts.length]);
 
   const load = async () => {
     const ch = channel.trim().toLowerCase();
@@ -172,7 +186,15 @@ export default function Redeem() {
                   <Input className="w-20" type="number" min={1}
                     placeholder={String(accounts.length)}
                     value={allCount[r.id] ?? ""}
-                    onChange={(e) => setAllCount((c) => ({ ...c, [r.id]: e.target.value }))} />
+                    onChange={(e) => setAllCount((c) => ({ ...c, [r.id]: e.target.value }))}
+                    onBlur={() => {
+                      const nums = Object.fromEntries(
+                        Object.entries({ ...allCount, [r.id]: allCount[r.id] })
+                          .filter(([, v]) => Number(v) >= 1)
+                          .map(([k, v]) => [k, Number(v)])
+                      );
+                      saveConfig({ counts: nums });
+                    }} />
                 </div>
                 <div>
                   <label className="text-[11px] text-zinc-400">Delay/Account (s)</label>

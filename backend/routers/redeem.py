@@ -29,6 +29,7 @@ class RedeemConfig(BaseModel):
     channel: str | None = None
     cooldowns: dict[str, float] | None = None
     master_delays: dict[str, float] | None = None
+    counts: dict[str, int] | None = None
     all_delay: float | None = None
 
 
@@ -48,6 +49,9 @@ def put_config(body: RedeemConfig, session: Session = Depends(get_session)):
     if body.master_delays is not None:
         clean = {k: max(0.0, float(v)) for k, v in body.master_delays.items()}
         redeem_mod._set_setting(session, redeem_mod.MASTER_DELAYS_KEY, json.dumps(clean))
+    if body.counts is not None:
+        clean = {k: max(1, int(v)) for k, v in body.counts.items()}
+        redeem_mod._set_setting(session, redeem_mod.COUNTS_KEY, json.dumps(clean))
     if body.all_delay is not None:
         redeem_mod._set_setting(session, redeem_mod.ALL_DELAY_KEY, str(max(0.0, body.all_delay)))
     session.commit()
