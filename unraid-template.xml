@@ -37,6 +37,12 @@
   <Config Name="PROXY_CHECK_INTERVAL" Target="PROXY_CHECK_INTERVAL" Default="120" Mode=""
           Description="Seconds between proxy health checks of running accounts."
           Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
+  <Config Name="AUTOSTART_ENABLED" Target="AUTOSTART_ENABLED" Default="true" Mode=""
+          Description="Automatically (re)start enabled accounts when the container boots, once their proxies are reachable."
+          Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="AUTOSTART_MAX_WAIT" Target="AUTOSTART_MAX_WAIT" Default="180" Mode=""
+          Description="Max seconds to wait for proxies/tunnel to become reachable before auto-starting anyway."
+          Type="Variable" Display="advanced" Required="false" Mask="false">180</Config>
   <Config Name="MULLVAD_WG_CONF" Target="MULLVAD_WG_CONF" Default="" Mode=""
           Description="Optional: paste a full Mullvad WireGuard config to enable the built-in tunnel (needed for Mullvad SOCKS5 relays). Alternatively drop the file at /data/mullvad.conf. Split-tunnel by default (WebUI stays on LAN). Requires the NET_ADMIN cap + /dev/net/tun (already in Extra Parameters)."
           Type="Variable" Display="advanced" Required="false" Mask="true"></Config>

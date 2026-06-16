@@ -17,6 +17,7 @@ from backend.models import Account, Event
 router = APIRouter(tags=["ws"])
 
 TAIL_LINES = 200
+TAIL_BYTES = 96 * 1024  # only read the last ~96 KB for the initial tail
 
 
 def _event_dict(e: Event) -> dict:
@@ -35,11 +36,19 @@ async def ws_logs(ws: WebSocket, username: str):
     offset = 0
     try:
         if path.exists():
-            raw = path.read_bytes()
-            tail = raw.decode("utf-8", "ignore").splitlines()[-TAIL_LINES:]
-            for line in tail:
+            # Read only the tail of the file (not the whole thing) so large logs
+            # still open instantly.
+            size = path.stat().st_size
+            read_from = max(0, size - TAIL_BYTES)
+            with open(path, "rb") as f:
+                f.seek(read_from)
+                raw = f.read()
+                offset = f.tell()
+            text = raw.decode("utf-8", "ignore")
+            if read_from > 0:
+                text = text.split("\n", 1)[-1]  # drop the partial first line
+            for line in text.splitlines()[-TAIL_LINES:]:
                 await ws.send_text(line)
-            offset = len(raw)
 
         while True:
             await asyncio.sleep(0.5)

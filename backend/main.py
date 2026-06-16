@@ -31,13 +31,80 @@ logger = logging.getLogger("backend")
 proxy_monitor = ProxyHealthMonitor(manager)
 
 
+def _reset_statuses_to_stopped() -> None:
+    """On boot no miner process is running yet; clear any stale 'running' state."""
+    from sqlmodel import Session, select
+    from backend.db import engine
+    from backend.models import Account
+    with Session(engine) as session:
+        for acc in session.exec(select(Account)).all():
+            if acc.status != "stopped":
+                acc.status = "stopped"
+                session.add(acc)
+        session.commit()
+
+
+def _autostart_when_ready() -> None:
+    """Start enabled accounts as soon as their assigned proxies are reachable.
+
+    Polls the distinct assigned proxies; once at least one responds (the shared
+    tunnel is up) we start. If no account uses a proxy, we start right away. A
+    hard cap (AUTOSTART_MAX_WAIT) prevents hanging — after it we start anyway and
+    the proxy monitor handles any proxy that is still down.
+    """
+    import threading
+    import time
+
+    from sqlmodel import Session, select
+    from backend.db import engine
+    from backend.models import Account, Proxy
+    from backend.proxy_util import to_engine_proxy
+
+    def _proxies_ready() -> bool:
+        with Session(engine) as session:
+            pids = {
+                a.proxy_id for a in session.exec(
+                    select(Account).where(Account.enabled == True)  # noqa: E712
+                ).all() if a.proxy_id is not None
+            }
+            proxies = [session.get(Proxy, pid) for pid in pids]
+        if not proxies:
+            return True  # direct mining: nothing to wait for
+        for p in proxies:
+            try:
+                if to_engine_proxy(p).test_proxy(timeout=6).get("ok"):
+                    return True  # shared tunnel up -> relays reachable
+            except Exception:  # noqa: BLE001
+                pass
+        return False
+
+    def _run():
+        deadline = time.monotonic() + max(0, config.AUTOSTART_MAX_WAIT)
+        waited = False
+        while time.monotonic() < deadline:
+            if _proxies_ready():
+                break
+            waited = True
+            time.sleep(4)
+        started = manager.start_all()
+        logger.info("Auto-start: launched %d account(s)%s",
+                    len(started), " (proxies ready)" if waited else "")
+
+    threading.Thread(target=_run, name="autostart", daemon=True).start()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config.ensure_dirs()
     init_db()
+    _reset_statuses_to_stopped()
     manager.start_reaper()
     if config.PROXY_MONITOR_ENABLED:
         proxy_monitor.start()
+    if config.AUTOSTART_ENABLED:
+        _autostart_when_ready()
+        logger.info("Auto-start armed (waits until proxies reachable, max %ss).",
+                    config.AUTOSTART_MAX_WAIT)
     logger.info("Backend ready. Data dir: %s", config.DATA_DIR)
     try:
         yield

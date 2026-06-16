@@ -160,6 +160,18 @@ export const api = {
       `/api/redeem/${id}`,
       { method: "POST", body: JSON.stringify(body) }
     ),
+  redeemAll: (body: { channel: string; reward_id: string; prompt?: string }) =>
+    req<{ reward: string; accounts: number; succeeded: number; results: { account: string; ok: boolean; message?: string }[] }>(
+      "/api/redeem/all",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+  getRedeemConfig: () =>
+    req<{ channel: string; cooldowns: Record<string, number>; all_delay: number }>("/api/redeem/config"),
+  putRedeemConfig: (body: { channel?: string; cooldowns?: Record<string, number>; all_delay?: number }) =>
+    req<{ channel: string; cooldowns: Record<string, number>; all_delay: number }>("/api/redeem/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
 
   // settings
   getStreamers: () => req<{ streamers: string[]; raw: string }>("/api/settings/streamers"),

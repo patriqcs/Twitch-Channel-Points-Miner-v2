@@ -7,15 +7,75 @@ request goes through that account's assigned proxy. Watch-only mining never
 spends points; this module is the explicit "spend points on a custom reward"
 side, triggered manually from the UI.
 """
+import json
 import pickle
+import threading
+import time
 import uuid
 
 import requests
 from sqlmodel import Session
 
 from backend import config
-from backend.models import Account, Proxy
+from backend.models import Account, AppSetting, Proxy
 from backend.proxy_util import to_engine_proxy
+
+# ---- persisted redeem settings (AppSetting keys) ----
+CHANNEL_KEY = "REDEEM_CHANNEL"
+COOLDOWNS_KEY = "REDEEM_COOLDOWNS"     # JSON {reward_id: seconds}, applies to all accounts
+ALL_DELAY_KEY = "REDEEM_ALL_DELAY"     # seconds between accounts on "all accounts" redeem
+
+# ---- in-memory per-(account,reward) client cooldown (resets on restart) ----
+_cooldowns: dict = {}            # (account_id, reward_id) -> epoch seconds when available again
+_cd_lock = threading.Lock()
+
+
+def _get_setting(session: Session, key: str, default=None):
+    s = session.get(AppSetting, key)
+    return s.value if s is not None else default
+
+
+def _set_setting(session: Session, key: str, value: str) -> None:
+    s = session.get(AppSetting, key)
+    if s is None:
+        session.add(AppSetting(key=key, value=value))
+    else:
+        s.value = value
+        session.add(s)
+
+
+def get_config(session: Session) -> dict:
+    raw = _get_setting(session, COOLDOWNS_KEY, "{}")
+    try:
+        cooldowns = json.loads(raw) if raw else {}
+    except ValueError:
+        cooldowns = {}
+    return {
+        "channel": _get_setting(session, CHANNEL_KEY, "") or "",
+        "cooldowns": cooldowns,
+        "all_delay": float(_get_setting(session, ALL_DELAY_KEY, "2") or 2),
+    }
+
+
+def cooldown_seconds(session: Session, reward_id: str) -> float:
+    cfg = get_config(session)
+    try:
+        return float(cfg["cooldowns"].get(reward_id, 0) or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def set_account_cooldown(account_id: int, reward_id: str, seconds: float) -> None:
+    if seconds <= 0:
+        return
+    with _cd_lock:
+        _cooldowns[(account_id, reward_id)] = time.monotonic() + seconds
+
+
+def cooldown_remaining(account_id: int, reward_id: str) -> float:
+    with _cd_lock:
+        until = _cooldowns.get((account_id, reward_id), 0)
+    return max(0.0, until - time.monotonic())
 
 # Same public web client id the twitch.tv site uses; Helix/OAuth app tokens are
 # NOT allowed to run these private operations.

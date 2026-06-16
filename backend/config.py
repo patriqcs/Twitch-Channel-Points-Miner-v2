@@ -53,6 +53,14 @@ PROXY_CHECK_INTERVAL = int(os.environ.get("PROXY_CHECK_INTERVAL", "120"))  # sec
 PROXY_FAIL_THRESHOLD = int(os.environ.get("PROXY_FAIL_THRESHOLD", "2"))
 PROXY_ALLOW_DIRECT = _bool_env("PROXY_ALLOW_DIRECT", True)
 
+# ---- Auto-start on boot ----
+# On container start, (re)start the enabled accounts automatically — but wait
+# until their assigned proxies are actually reachable first (no fixed delay).
+# AUTOSTART_MAX_WAIT caps that wait so boot can't hang forever; if it's hit, we
+# start anyway and the proxy monitor sorts out any still-dead proxy.
+AUTOSTART_ENABLED = _bool_env("AUTOSTART_ENABLED", True)
+AUTOSTART_MAX_WAIT = int(os.environ.get("AUTOSTART_MAX_WAIT", "180"))  # seconds
+
 
 def ensure_dirs() -> None:
     """Create all required directories (idempotent)."""
