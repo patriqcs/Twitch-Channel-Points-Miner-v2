@@ -1,0 +1,6 @@
+# Web backend dependencies (kept separate from the miner's requirements.txt).
+fastapi
+uvicorn[standard]
+sqlmodel
+cryptography
+httpx

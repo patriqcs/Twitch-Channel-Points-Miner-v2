@@ -1,0 +1,65 @@
+# -*- coding: utf-8 -*-
+"""SQLModel database models.
+
+Passwords are stored only in their encrypted form (`*_enc` columns); plaintext
+never touches the database. Cookies stay as pickle files on disk (existing
+miner mechanism), keyed by the account username.
+"""
+from datetime import datetime, timezone
+from typing import List, Optional
+
+from sqlmodel import Field, Relationship, SQLModel
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class Proxy(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str
+    scheme: str = "http"  # http | https | socks4 | socks5 | socks5h
+    host: str
+    port: int
+    username: Optional[str] = None
+    password_enc: Optional[str] = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+    accounts: List["Account"] = Relationship(back_populates="proxy")
+
+
+class Account(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, unique=True)
+    password_enc: Optional[str] = None
+    enabled: bool = True
+    # stopped | running | starting | needs_login | error
+    status: str = "stopped"
+    proxy_id: Optional[int] = Field(default=None, foreign_key="proxy.id")
+    created_at: datetime = Field(default_factory=utcnow)
+    last_login_at: Optional[datetime] = None
+
+    proxy: Optional[Proxy] = Relationship(back_populates="accounts")
+    events: List["Event"] = Relationship(back_populates="account")
+
+
+class Event(SQLModel, table=True):
+    """Time-series of per-account activity: points, status changes, errors."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    account_id: int = Field(index=True, foreign_key="account.id")
+    ts: datetime = Field(default_factory=utcnow, index=True)
+    # points_earned | points_spent | status | login | error | watch
+    type: str = Field(index=True)
+    streamer: Optional[str] = None
+    points: Optional[int] = None
+    balance: Optional[int] = None
+    reason: Optional[str] = None
+    message: Optional[str] = None
+
+    account: Optional[Account] = Relationship(back_populates="events")
+
+
+class AppSetting(SQLModel, table=True):
+    """Global key/value settings (e.g. the shared STREAMERS list)."""
+    key: str = Field(primary_key=True)
+    value: str = ""

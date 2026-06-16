@@ -52,6 +52,11 @@ nicht gebaut. Accounts legt der Nutzer selbst an; die UI importiert/verwaltet si
   test_proxy), Proxy-Injektion in `Twitch`/`TwitchLogin`/`WebSocketsPool`, `Settings.proxy`-Global,
   `proxy`-Param in der Hauptklasse + `run.py` (ENV `PROXY`), `requests[socks]`+`python-socks` in
   requirements. E2E getestet: HTTP-Requests UND WebSocket docken nachweislich am Proxy an.
-- Phasen 2–7: noch nicht implementiert.
+- ✅ **Phase 2 fertig** (2026-06-16): `backend/`-Package — FastAPI-App (`main.py`, Health, Lifespan),
+  SQLModel-Models (Account/Proxy/Event/AppSetting, verschlüsselte Creds), `crypto.py` (Fernet,
+  Key in DATA_DIR/secret.key chmod 600), `db.py` (SQLite+WAL+FK), `config.py` (alles unter DATA_DIR),
+  `schemas.py`, `migrate.py` (idempotent aus accounts.txt/streamers.txt). Getestet: Crypto-Roundtrip,
+  WAL, Relationships, Unique-Constraint, Migration-Idempotenz, Health.
+- Phasen 3–7: noch nicht implementiert.
 - Vorhandenes Fundament (frühere Session, uncommittet): `run.py`, `docker-entrypoint.sh`,
   `Dockerfile.unraid`, `docker-compose.yml`, `start_all.sh`/`stop_all.sh`, `UNRAID.md`, `.gitignore`.
