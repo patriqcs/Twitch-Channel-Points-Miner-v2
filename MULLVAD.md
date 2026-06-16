@@ -1,54 +1,51 @@
-# Mullvad als Proxy-Quelle (stabil, eigene IP pro Account)
+# Mullvad als Proxy-Quelle (eingebaut, eigene IP pro Account)
 
-Free-Proxys sterben ständig. Mullvad ist deutlich stabiler. Mullvads SOCKS5-Relays
-sind aber **nur erreichbar, wenn der Container in einem Mullvad-WireGuard-Tunnel läuft**.
-Setup in zwei Teilen: **(1)** Tunnel-Sidecar, **(2)** Relays in der WebUI hinzufügen.
+Free-Proxys sterben ständig — Mullvad ist deutlich stabiler. Mullvads SOCKS5-Relays
+sind aber **nur im Mullvad-WireGuard-Tunnel** erreichbar (öffentlich lösen die
+`*.socks5.relays.mullvad.net`-Namen nicht auf). Der Tunnel ist **direkt ins Image
+eingebaut** — kein zweiter Container nötig.
 
 ## Wie es funktioniert
-- Ein **gluetun**-Container hält die Mullvad-WireGuard-Verbindung (ein Basis-Server).
-- Der Miner-Container läuft **im Netzwerk von gluetun** (`--net=container:mullvad`).
-- Innerhalb des Tunnels sind Mullvads **Multihop-SOCKS5-Relays** erreichbar, z. B.
-  `de-ber-wg-socks5-001.relays.mullvad.net:1080` – **jedes Relay = eigene Exit-IP**.
-- In der WebUI fügst du diese Relays über **Proxys → „Mullvad"** hinzu und weist jedem
-  Account ein anderes Relay zu → verschiedene IPs, alle stabil.
+- Der Container baut beim Start einen Mullvad-WireGuard-Tunnel auf (`wg-quick`).
+- **Split-Tunnel:** nur Mullvads `10.64.0.0/10` läuft durch den Tunnel (DNS `10.64.0.1`
+  + die `10.124.x`-Relays). Dein **LAN/WebUI bleibt direkt erreichbar**.
+- Die Miner nutzen pro Account ein **Multihop-SOCKS5-Relay** (`…-socks5-…relays.mullvad.net:1080`)
+  → **jedes Relay = eigene Exit-IP**, alle stabil über Mullvad.
 
-## 1. gluetun-Sidecar (Unraid → Add Container, Advanced)
-- **Repository:** `qmcgaw/gluetun`
-- **Extra Parameters:** `--cap-add=NET_ADMIN`
-- **Variablen:**
-  - `VPN_SERVICE_PROVIDER=mullvad`
-  - `VPN_TYPE=wireguard`
-  - `WIREGUARD_PRIVATE_KEY=<dein Key>` *(Mullvad-Konto → WireGuard-Konfig generieren)*
-  - `WIREGUARD_ADDRESSES=<z. B. 10.x.x.x/32 aus der Mullvad-Konfig>`
-  - `SERVER_COUNTRIES=Germany` *(Basis-Server; optional)*
-  - `FIREWALL_OUTBOUND_SUBNETS=192.168.178.0/24` *(damit dein LAN/die WebUI erreichbar bleibt)*
-- **Wichtig – Ports:** Weil der Miner gleich im gluetun-Netz hängt, wird der WebUI-Port
-  **am gluetun-Container** veröffentlicht: dort Port **`8844 → 8844`** (oder `8000`) mappen,
-  nicht mehr am Miner-Container.
+## 1. Mullvad-WireGuard-Config holen
+Im Mullvad-Konto → **WireGuard configuration** → Land/Server wählen → Config generieren
+(gibt `PrivateKey`, `Address`, `PublicKey`, `Endpoint`). Den **gesamten Text** der `.conf`
+brauchst du gleich.
 
-## 2. Miner-Container ins Tunnel-Netz hängen
-In der Edit-Seite des `twitch-miner-multi`-Containers:
-- **Network Type:** `None`, und in **Extra Parameters** ergänzen:
-  `--net=container:mullvad` *(Name des gluetun-Containers)*
-- Den **Port `8844`** am Miner-Container **entfernen** (wird jetzt über gluetun veröffentlicht).
-- Das `/data`-Mapping (`/mnt/user/appdata/twitch-miner-manager`) **bleibt** wie es ist.
+## 2. Container konfigurieren (Unraid → Edit)
+Das Template bringt schon mit: `--cap-add=NET_ADMIN --device=/dev/net/tun` (in *Extra Parameters*).
+Dann **eine** der beiden Varianten:
+- **Variable `MULLVAD_WG_CONF`** = kompletter Inhalt deiner Mullvad-`.conf` (einfügen), **oder**
+- Datei unter **`/data/mullvad.conf`** ablegen (im appdata-Ordner `…/twitch-miner-manager/`).
 
-> Hinweis: Setzt du `WEB_PORT`, dann am gluetun-Container denselben Port mappen.
+Optional: `MULLVAD_FULL_TUNNEL=true` routet *alles* über Mullvad (Standard `false` =
+WebUI bleibt im LAN). `AllowedIPs`/`DNS` werden automatisch passend gesetzt — du musst
+in der Config nichts anpassen.
 
-## 3. Relays in der WebUI hinzufügen
-Proxys → **Mullvad** → Land (z. B. `de`) + Anzahl → **Relays hinzufügen**.
-Sie werden ohne Test hinzugefügt (außerhalb des Tunnels nicht erreichbar). Danach:
-**„Alle testen"** – jetzt sollten sie ✅ sein. Dann pro Account ein Relay zuweisen.
+Container starten. Im Log sollte stehen: `>>> WireGuard up. Using Mullvad DNS …`.
+(Fehlt der Tunnel, läuft die App trotzdem — nur die Relays sind dann nicht erreichbar.)
 
-## Failover
-Der Backend-Monitor prüft laufende Accounts regelmäßig (Twitch-Erreichbarkeit) und
-reagiert auf Laufzeit-Fehler. Fällt ein Relay aus, wird automatisch auf ein anderes
-funktionierendes umgezogen; ist keins frei, läuft der Account im Notfall direkt
-weiter und wird wieder auf einen Proxy gelegt, sobald einer verfügbar ist.
-Tuning per ENV: `PROXY_CHECK_INTERVAL` (Sek, Default 120), `PROXY_FAIL_THRESHOLD`
-(Default 2), `PROXY_ALLOW_DIRECT` (Default true), `PROXY_MONITOR_ENABLED` (Default true).
+## 3. Relays hinzufügen & zuweisen
+WebUI → **Proxys → „Mullvad"** → Land (z. B. `de`) + Anzahl → **Relays hinzufügen**
+(werden ohne Test angelegt). Danach **„Alle testen"** → jetzt sollten sie ✅ sein
+(jetzt sind sie über den Tunnel erreichbar). Dann pro Account ein Relay zuweisen.
 
-## Hinweis zu Twitch
-Mullvad-IPs sind VPN-/Datacenter-IPs – Twitch erkennt die als VPN und kann eher
-Login-Verifizierungen verlangen. Für reines Punkte-Mining meist unkritisch, aber
-nicht „unsichtbar". Für maximale Tarnung wären Residential-Proxys nötig (teurer).
+## 4. Failover (automatisch)
+Der Backend-Monitor prüft laufende Accounts regelmäßig auf **Twitch-Erreichbarkeit**
+und reagiert auf Laufzeit-Connection-Fehler. Fällt ein Relay aus → automatisch auf ein
+anderes funktionierendes umziehen; ist keins frei → im Notfall direkt weiter, und wieder
+auf einen Proxy gelegt, sobald einer verfügbar ist.
+ENV-Tuning: `PROXY_CHECK_INTERVAL` (Sek, Default 120), `PROXY_FAIL_THRESHOLD` (Default 2),
+`PROXY_ALLOW_DIRECT` (Default true), `PROXY_MONITOR_ENABLED` (Default true).
+
+## Voraussetzungen / Hinweise
+- **NET_ADMIN-Cap + `/dev/net/tun`** sind nötig (Template setzt sie). Ohne sie schlägt
+  `wg-quick up` fehl (Log-Warnung) und die App läuft ohne Tunnel weiter.
+- Unraid-Kernel hat WireGuard-Support → kein extra Modul nötig.
+- Mullvad-IPs sind VPN-/Datacenter-IPs; Twitch kann eher Login-Verifizierung verlangen.
+  Für reines Punkte-Mining meist unkritisch, aber nicht „unsichtbar".

@@ -17,9 +17,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DATA_DIR=/data
 
-# tini = proper PID 1 (reaps miner subprocesses, forwards signals)
+# tini = proper PID 1 (reaps miner subprocesses, forwards signals).
+# wireguard-tools/iproute2/iptables = optional built-in Mullvad tunnel (wg-quick);
+# iputils-ping = tunnel sanity check in the entrypoint.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tini \
+    && apt-get install -y --no-install-recommends \
+        tini wireguard-tools iproute2 iptables iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./requirements.txt
@@ -30,6 +33,8 @@ RUN pip install --no-cache-dir -r requirements.txt -r backend-requirements.txt
 COPY TwitchChannelPointsMiner ./TwitchChannelPointsMiner
 COPY backend ./backend
 COPY miner_runner.py run.py ./
+COPY docker-entrypoint-web.sh /usr/local/bin/docker-entrypoint-web.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint-web.sh
 
 # Built frontend from stage 1
 COPY --from=frontend /fe/dist ./frontend/dist
@@ -39,6 +44,7 @@ VOLUME ["/data"]
 ENV WEB_PORT=8000
 EXPOSE 8000
 
-# sh -c so WEB_PORT expands at runtime; exec keeps uvicorn as tini's child (PID reaping/signals).
+# Entrypoint optionally brings up the Mullvad WireGuard tunnel, then execs
+# uvicorn (kept as tini's child for proper PID reaping/signals).
 ENTRYPOINT ["tini", "--"]
-CMD ["sh", "-c", "exec uvicorn backend.main:app --host 0.0.0.0 --port ${WEB_PORT:-8000}"]
+CMD ["/usr/local/bin/docker-entrypoint-web.sh"]

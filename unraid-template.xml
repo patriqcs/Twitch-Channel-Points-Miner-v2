@@ -16,7 +16,7 @@
   <Category>Tools: Other:</Category>
   <WebUI>http://[IP]:[PORT:8000]/</WebUI>
   <Icon>https://raw.githubusercontent.com/rdavydov/Twitch-Channel-Points-Miner-v2/master/assets/logo.png</Icon>
-  <ExtraParams>--init</ExtraParams>
+  <ExtraParams>--init --cap-add=NET_ADMIN --device=/dev/net/tun</ExtraParams>
   <Config Name="WebUI Port" Target="8000" Default="8000" Mode="tcp"
           Description="Host port for the web interface. Change the LEFT (host) value to whatever you like — the WebUI link follows it automatically. Only touch WEB_PORT (advanced) if you also change the container-internal port."
           Type="Port" Display="always" Required="true" Mask="false">8000</Config>
@@ -37,4 +37,10 @@
   <Config Name="PROXY_CHECK_INTERVAL" Target="PROXY_CHECK_INTERVAL" Default="120" Mode=""
           Description="Seconds between proxy health checks of running accounts."
           Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
+  <Config Name="MULLVAD_WG_CONF" Target="MULLVAD_WG_CONF" Default="" Mode=""
+          Description="Optional: paste a full Mullvad WireGuard config to enable the built-in tunnel (needed for Mullvad SOCKS5 relays). Alternatively drop the file at /data/mullvad.conf. Split-tunnel by default (WebUI stays on LAN). Requires the NET_ADMIN cap + /dev/net/tun (already in Extra Parameters)."
+          Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="MULLVAD_FULL_TUNNEL" Target="MULLVAD_FULL_TUNNEL" Default="false" Mode=""
+          Description="Route ALL container traffic through Mullvad instead of only the Mullvad subnets. Leave false so the WebUI stays reachable on your LAN."
+          Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
 </Container>
