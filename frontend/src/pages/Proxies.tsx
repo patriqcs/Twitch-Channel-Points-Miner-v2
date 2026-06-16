@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Wifi } from "lucide-react";
-import { api, type ProxyTestResult } from "@/lib/api";
+import { Plus, Trash2, Upload, Wifi } from "lucide-react";
+import { api, type ProxyImportResult, type ProxyTestResult } from "@/lib/api";
 import { Button, Card, Input, Modal } from "@/components/ui";
 
 const EMPTY = { name: "", scheme: "socks5", host: "", port: "", username: "", password: "" };
@@ -15,6 +15,25 @@ export default function Proxies() {
   const [form, setForm] = useState({ ...EMPTY });
   const [tests, setTests] = useState<Record<number, ProxyTestResult | "loading">>({});
   const [err, setErr] = useState<string | null>(null);
+
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importResult, setImportResult] = useState<ProxyImportResult | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const importMut = useMutation({
+    mutationFn: () => api.importProxies(importText),
+    onSuccess: (r) => { setImportResult(r); setImportText(""); invalidate(); },
+    onError: (e: Error) => setErr(e.message),
+  });
+
+  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text();
+    setImportText((prev) => (prev ? `${prev}\n${text}` : text));
+    if (fileInput.current) fileInput.current.value = "";
+  };
 
   const create = useMutation({
     mutationFn: () =>
@@ -44,7 +63,12 @@ export default function Proxies() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Proxys</h1>
-        <Button onClick={() => setShowAdd(true)}><Plus size={15} /> Proxy</Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => { setImportResult(null); setShowImport(true); }}>
+            <Upload size={15} /> Import .txt
+          </Button>
+          <Button onClick={() => setShowAdd(true)}><Plus size={15} /> Proxy</Button>
+        </div>
       </div>
 
       <div className="space-y-3">
@@ -121,6 +145,55 @@ export default function Proxies() {
             onClick={() => create.mutate()}>
             Anlegen
           </Button>
+        </div>
+      </Modal>
+
+      <Modal open={showImport} onClose={() => setShowImport(false)} title="Proxys importieren (.txt)">
+        <div className="space-y-3">
+          <p className="text-xs text-zinc-400">
+            Eine Zeile pro Proxy, Format <code>scheme://host:port</code> (z. B.{" "}
+            <code>socks5://1.2.3.4:1080</code> oder <code>http://user:pass@1.2.3.4:8080</code>).
+            Leerzeilen und <code>#</code>-Kommentare werden ignoriert; Duplikate übersprungen.
+          </p>
+          <textarea
+            className="h-44 w-full rounded-md border border-zinc-700 bg-zinc-950 p-2 font-mono text-xs"
+            placeholder={"socks5://1.2.3.4:1080\nhttp://5.6.7.8:8080"}
+            value={importText}
+            onChange={(e) => setImportText(e.target.value)}
+          />
+          <div className="flex items-center gap-2">
+            <input ref={fileInput} type="file" accept=".txt,text/plain"
+              className="hidden" onChange={onPickFile} />
+            <Button size="sm" variant="outline" onClick={() => fileInput.current?.click()}>
+              <Upload size={14} /> Datei wählen
+            </Button>
+            <Button className="ml-auto"
+              disabled={!importText.trim() || importMut.isPending}
+              onClick={() => importMut.mutate()}>
+              Importieren
+            </Button>
+          </div>
+
+          {importResult && (
+            <div className="space-y-2 rounded-md border border-zinc-700 bg-zinc-900/50 p-3 text-sm">
+              <div>
+                <span className="text-emerald-400">✅ {importResult.added} hinzugefügt</span>
+                {" · "}
+                <span className="text-zinc-400">{importResult.skipped_duplicate} Duplikate</span>
+                {" · "}
+                <span className={importResult.failed ? "text-red-400" : "text-zinc-400"}>
+                  {importResult.failed} fehlerhaft
+                </span>
+              </div>
+              {importResult.errors.length > 0 && (
+                <ul className="max-h-28 space-y-0.5 overflow-y-auto text-xs text-red-300">
+                  {importResult.errors.map((e) => (
+                    <li key={e.line}>Zeile {e.line}: {e.value} — {e.error}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       </Modal>
     </div>

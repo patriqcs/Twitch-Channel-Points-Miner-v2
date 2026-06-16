@@ -7,7 +7,15 @@ from backend import crypto
 from backend.db import get_session
 from backend.models import Account, Proxy
 from backend.proxy_util import to_engine_proxy
-from backend.schemas import ProxyCreate, ProxyRead, ProxyTestResult, ProxyUpdate
+from backend.schemas import (
+    ProxyCreate,
+    ProxyImport,
+    ProxyImportError,
+    ProxyImportResult,
+    ProxyRead,
+    ProxyTestResult,
+    ProxyUpdate,
+)
 
 router = APIRouter(prefix="/api/proxies", tags=["proxies"])
 
@@ -39,6 +47,56 @@ def create_proxy(payload: ProxyCreate, session: Session = Depends(get_session)):
     session.commit()
     session.refresh(p)
     return _to_read(session, p)
+
+
+@router.post("/import", response_model=ProxyImportResult, status_code=201)
+def import_proxies(payload: ProxyImport, session: Session = Depends(get_session)):
+    """Bulk-add proxies from a list (one 'scheme://[user:pass@]host:port' per line).
+
+    Blank lines and '#' comments are ignored. Duplicates (same scheme/host/port,
+    already stored or repeated within the list) are skipped, not errored.
+    """
+    from TwitchChannelPointsMiner.classes.Proxy import Proxy as EngineProxy
+
+    # Seed the dedup set with what's already stored.
+    seen = {
+        (p.scheme.lower(), p.host.lower(), p.port)
+        for p in session.exec(select(Proxy)).all()
+    }
+
+    result = ProxyImportResult()
+    for idx, raw in enumerate(payload.text.splitlines(), start=1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            ep = EngineProxy.from_url(line)
+        except Exception as exc:  # noqa: BLE001 - report parse error per line
+            result.failed += 1
+            result.errors.append(ProxyImportError(line=idx, value=line, error=str(exc)))
+            continue
+
+        key = (ep.scheme.lower(), ep.host.lower(), ep.port)
+        if key in seen:
+            result.skipped_duplicate += 1
+            continue
+        seen.add(key)
+
+        p = Proxy(
+            name=f"{ep.host}:{ep.port}",
+            scheme=ep.scheme,
+            host=ep.host,
+            port=ep.port,
+            username=ep.username,
+            password_enc=crypto.encrypt(ep.password),
+        )
+        session.add(p)
+        session.flush()  # assign id without committing each row individually
+        result.proxies.append(_to_read(session, p))
+        result.added += 1
+
+    session.commit()
+    return result
 
 
 @router.patch("/{proxy_id}", response_model=ProxyRead)

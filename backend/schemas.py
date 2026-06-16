@@ -5,7 +5,7 @@ Kept separate from the table models so we never serialize encrypted password
 columns to clients — we expose a boolean `has_password` instead.
 """
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel
 
@@ -46,6 +46,26 @@ class ProxyTestResult(BaseModel):
     ip: Optional[str] = None
     latency_ms: Optional[int] = None
     error: Optional[str] = None
+
+
+class ProxyImport(BaseModel):
+    # One proxy per line: "scheme://[user:pass@]host:port" or bare "host:port".
+    # Blank lines and lines starting with '#' are ignored.
+    text: str
+
+
+class ProxyImportError(BaseModel):
+    line: int
+    value: str
+    error: str
+
+
+class ProxyImportResult(BaseModel):
+    added: int = 0
+    skipped_duplicate: int = 0
+    failed: int = 0
+    errors: List[ProxyImportError] = []
+    proxies: List[ProxyRead] = []
 
 
 # ---- Account ----

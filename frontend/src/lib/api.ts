@@ -30,6 +30,14 @@ export interface ProxyTestResult {
   error: string | null;
 }
 
+export interface ProxyImportResult {
+  added: number;
+  skipped_duplicate: number;
+  failed: number;
+  errors: { line: number; value: string; error: string }[];
+  proxies: Proxy[];
+}
+
 export interface EventRow {
   id: number;
   type: string;
@@ -100,6 +108,11 @@ export const api = {
   listProxies: () => req<Proxy[]>("/api/proxies"),
   createProxy: (b: Record<string, unknown>) =>
     req<Proxy>("/api/proxies", { method: "POST", body: JSON.stringify(b) }),
+  importProxies: (text: string) =>
+    req<ProxyImportResult>("/api/proxies/import", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
   updateProxy: (id: number, b: Record<string, unknown>) =>
     req<Proxy>(`/api/proxies/${id}`, { method: "PATCH", body: JSON.stringify(b) }),
   deleteProxy: (id: number) =>
