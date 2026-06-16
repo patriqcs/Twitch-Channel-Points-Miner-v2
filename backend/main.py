@@ -17,6 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from backend import config
 from backend.db import init_db
 from backend.manager import manager
+from backend.proxy_monitor import ProxyHealthMonitor
 from backend.routers import accounts, internal, metrics, proxies, settings, system, ws
 
 FRONTEND_DIR = Path(
@@ -25,16 +26,21 @@ FRONTEND_DIR = Path(
 
 logger = logging.getLogger("backend")
 
+proxy_monitor = ProxyHealthMonitor(manager)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     config.ensure_dirs()
     init_db()
     manager.start_reaper()
+    if config.PROXY_MONITOR_ENABLED:
+        proxy_monitor.start()
     logger.info("Backend ready. Data dir: %s", config.DATA_DIR)
     try:
         yield
     finally:
+        proxy_monitor.stop()
         manager.shutdown()
 
 

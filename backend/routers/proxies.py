@@ -10,6 +10,7 @@ from backend.db import get_session
 from backend.models import Account, Proxy
 from backend.proxy_util import to_engine_proxy
 from backend.schemas import (
+    MullvadImport,
     ProxyBulkDelete,
     ProxyBulkDeleteResult,
     ProxyBulkTestItem,
@@ -21,6 +22,8 @@ from backend.schemas import (
     ProxyTestResult,
     ProxyUpdate,
 )
+
+MULLVAD_RELAYS_URL = "https://api.mullvad.net/www/relays/wireguard/"
 
 # Cap concurrency so a huge proxy list doesn't open hundreds of sockets at once.
 _TEST_TIMEOUT = 8
@@ -119,6 +122,61 @@ def import_proxies(payload: ProxyImport, session: Session = Depends(get_session)
         )
         session.add(p)
         session.flush()  # assign id without committing each row individually
+        result.proxies.append(_to_read(session, p))
+        result.added += 1
+
+    session.commit()
+    return result
+
+
+@router.post("/mullvad-import", response_model=ProxyImportResult, status_code=201)
+def import_mullvad(payload: MullvadImport, session: Session = Depends(get_session)):
+    """Add Mullvad WireGuard SOCKS5 relays as proxies.
+
+    Relays are only reachable while the container runs inside a Mullvad
+    WireGuard tunnel, so they are added WITHOUT a connectivity test. Use
+    'Alle testen' once the tunnel is up.
+    """
+    import requests
+
+    try:
+        resp = requests.get(MULLVAD_RELAYS_URL, timeout=15)
+        resp.raise_for_status()
+        relays = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(502, f"could not fetch Mullvad relay list: {exc}")
+
+    cc = (payload.country_code or "").strip().lower() or None
+    picked = []
+    for r in relays:
+        if not r.get("active") or not r.get("socks_name"):
+            continue
+        if cc and (r.get("country_code") or "").lower() != cc:
+            continue
+        if payload.daita_only and not r.get("daita"):
+            continue
+        picked.append(r)
+    if payload.limit and payload.limit > 0:
+        picked = picked[: payload.limit]
+
+    seen = {
+        (p.scheme.lower(), p.host.lower(), p.port)
+        for p in session.exec(select(Proxy)).all()
+    }
+    result = ProxyImportResult()
+    for r in picked:
+        host = r["socks_name"]
+        port = int(r.get("socks_port") or 1080)
+        key = ("socks5", host.lower(), port)
+        if key in seen:
+            result.skipped_duplicate += 1
+            continue
+        seen.add(key)
+        city = r.get("city_name") or r.get("country_name") or ""
+        p = Proxy(name=f"MV {r.get('country_code','').upper()} {city} ({r['hostname']})",
+                  scheme="socks5", host=host, port=port)
+        session.add(p)
+        session.flush()
         result.proxies.append(_to_read(session, p))
         result.added += 1
 

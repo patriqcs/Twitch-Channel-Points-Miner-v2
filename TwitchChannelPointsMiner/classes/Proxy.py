@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 # Endpoint used by test_proxy() to discover the proxy's exit IP.
 IP_CHECK_URL = "https://api.ipify.org?format=json"
 
+# What actually matters for mining: can the proxy reach Twitch? A proxy may
+# reach the internet (ipify ok) yet refuse/timeout to Twitch — that must count
+# as broken. Any HTTP response from this host means the proxy reached Twitch.
+TWITCH_CHECK_URL = "https://gql.twitch.tv/"
+
 # requests/proxy scheme -> websocket-client run_forever() proxy_type
 _WS_PROXY_TYPES = {
     "http": "http",
@@ -101,18 +106,31 @@ class Proxy:
         return kwargs
 
     def test_proxy(self, timeout: int = 10) -> dict:
-        """Fetch the exit IP through the proxy. Returns
-        {"ok": True, "ip": str, "latency_ms": int} or {"ok": False, "error": str}."""
+        """Check the proxy can reach Twitch. Returns
+        {"ok": True, "ip": str|None, "latency_ms": int} or {"ok": False, "error": str}.
+
+        'ok' means Twitch is reachable through the proxy (any HTTP response from
+        gql.twitch.tv). The exit IP is fetched best-effort for display only and
+        does not affect the verdict.
+        """
         start = time.perf_counter()
         try:
-            resp = requests.get(
-                IP_CHECK_URL, proxies=self.requests_proxies, timeout=timeout
+            # Any HTTP response = the proxy reached Twitch (status code irrelevant).
+            requests.get(
+                TWITCH_CHECK_URL, proxies=self.requests_proxies, timeout=timeout
             )
             latency_ms = int((time.perf_counter() - start) * 1000)
-            resp.raise_for_status()
-            return {"ok": True, "ip": resp.json().get("ip"), "latency_ms": latency_ms}
         except requests.exceptions.RequestException as e:
             return {"ok": False, "error": str(e)}
+
+        ip = None
+        try:
+            r = requests.get(IP_CHECK_URL, proxies=self.requests_proxies, timeout=timeout)
+            if r.ok:
+                ip = r.json().get("ip")
+        except requests.exceptions.RequestException:
+            pass
+        return {"ok": True, "ip": ip, "latency_ms": latency_ms}
 
     def __str__(self):
         # Never include credentials in logs.

@@ -114,6 +114,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text, test_before_add: testBeforeAdd }),
     }),
+  importMullvad: (body: { country_code?: string; limit: number; daita_only: boolean }) =>
+    req<ProxyImportResult>("/api/proxies/mullvad-import", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   testAllProxies: () =>
     req<(ProxyTestResult & { id: number; name: string })[]>("/api/proxies/test-all", {
       method: "POST",

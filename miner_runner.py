@@ -15,6 +15,7 @@ import logging
 import os
 import sys
 import threading
+import time
 
 import requests
 
@@ -69,6 +70,53 @@ def report(username: str, etype: str, **fields) -> None:
         )
     except requests.exceptions.RequestException:
         pass
+
+
+# ------------------------------------------------------- proxy error watcher
+class ProxyErrorReporter(logging.Handler):
+    """Watches the miner's ERROR logs for proxy/connection failures and reports
+    a 'proxy_error' event to the backend so the health monitor can fail over.
+
+    Only relevant when a proxy is set. Rate-limited: needs THRESHOLD matching
+    errors within WINDOW seconds, then at most one report per COOLDOWN seconds.
+    """
+
+    MARKERS = (
+        "SOCKSHTTPSConnectionPool",
+        "SOCKSConnectionPool",
+        "Max retries exceeded",
+        "Failed to establish a new connection",
+        "Connection refused",
+        "Connection reset",
+        "ProxyError",
+        "Unable to connect to proxy",
+        "Remote end closed connection",
+    )
+
+    def __init__(self, username: str, threshold: int = 4, window: float = 90.0,
+                 cooldown: float = 60.0):
+        super().__init__(level=logging.ERROR)
+        self.username = username
+        self.threshold = threshold
+        self.window = window
+        self.cooldown = cooldown
+        self._hits: list[float] = []
+        self._last_report = 0.0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+        except Exception:  # noqa: BLE001
+            return
+        if not any(m in msg for m in self.MARKERS):
+            return
+        now = time.monotonic()
+        self._hits = [t for t in self._hits if now - t <= self.window]
+        self._hits.append(now)
+        if len(self._hits) >= self.threshold and (now - self._last_report) >= self.cooldown:
+            self._last_report = now
+            self._hits.clear()
+            report(self.username, "proxy_error", message=msg[:200])
 
 
 # ---------------------------------------------------------------- reporter
@@ -150,6 +198,12 @@ def main():
 
     reporter = Reporter(username, miner)
     reporter.start()
+
+    # If mining through a proxy, watch the miner's logs for connection failures
+    # and report them so the backend health monitor can fail over to another proxy.
+    if proxy and INTERNAL_TOKEN:
+        logging.getLogger().addHandler(ProxyErrorReporter(username))
+
     report(username, "status", reason="starting")
     try:
         miner.mine([Streamer(n) for n in streamer_names], followers=False,

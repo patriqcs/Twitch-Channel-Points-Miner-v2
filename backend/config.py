@@ -36,6 +36,24 @@ BACKEND_URL = os.environ.get("BACKEND_URL", f"http://127.0.0.1:{WEB_PORT}")
 MAX_ACCOUNTS_PER_PROXY = int(os.environ.get("MAX_ACCOUNTS_PER_PROXY", "5"))
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
+
+
+# ---- Proxy auto-failover (health monitor) ----
+# Periodically connectivity-tests each running account's proxy. A proxy that
+# fails PROXY_FAIL_THRESHOLD checks in a row is treated as dead: the account is
+# moved to another working proxy, or (if none free and PROXY_ALLOW_DIRECT) kept
+# mining without a proxy as a last resort.
+PROXY_MONITOR_ENABLED = _bool_env("PROXY_MONITOR_ENABLED", True)
+PROXY_CHECK_INTERVAL = int(os.environ.get("PROXY_CHECK_INTERVAL", "120"))  # seconds
+PROXY_FAIL_THRESHOLD = int(os.environ.get("PROXY_FAIL_THRESHOLD", "2"))
+PROXY_ALLOW_DIRECT = _bool_env("PROXY_ALLOW_DIRECT", True)
+
+
 def ensure_dirs() -> None:
     """Create all required directories (idempotent)."""
     for d in (DATA_DIR, COOKIES_DIR, LOGS_DIR):

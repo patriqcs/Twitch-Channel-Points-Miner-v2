@@ -22,6 +22,22 @@ export default function Proxies() {
   const [importResult, setImportResult] = useState<ProxyImportResult | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
+  const [showMullvad, setShowMullvad] = useState(false);
+  const [mvCountry, setMvCountry] = useState("de");
+  const [mvLimit, setMvLimit] = useState("10");
+  const [mvDaita, setMvDaita] = useState(false);
+  const [mvResult, setMvResult] = useState<ProxyImportResult | null>(null);
+  const mullvadMut = useMutation({
+    mutationFn: () =>
+      api.importMullvad({
+        country_code: mvCountry.trim() || undefined,
+        limit: Number(mvLimit) || 0,
+        daita_only: mvDaita,
+      }),
+    onSuccess: (r) => { setMvResult(r); invalidate(); },
+    onError: (e: Error) => setErr(e.message),
+  });
+
   const importMut = useMutation({
     mutationFn: () => api.importProxies(importText, testOnImport),
     onSuccess: (r) => { setImportResult(r); setImportText(""); invalidate(); },
@@ -115,6 +131,9 @@ export default function Proxies() {
           </Button>
           <Button variant="outline" onClick={() => { setImportResult(null); setShowImport(true); }}>
             <Upload size={15} /> Import .txt
+          </Button>
+          <Button variant="outline" onClick={() => { setMvResult(null); setShowMullvad(true); }}>
+            <Plus size={15} /> Mullvad
           </Button>
           <Button onClick={() => setShowAdd(true)}><Plus size={15} /> Proxy</Button>
         </div>
@@ -250,6 +269,43 @@ export default function Proxies() {
                   ))}
                 </ul>
               )}
+            </div>
+          )}
+        </div>
+      </Modal>
+
+      <Modal open={showMullvad} onClose={() => setShowMullvad(false)} title="Mullvad-Relays hinzufügen">
+        <div className="space-y-3">
+          <p className="text-xs text-zinc-400">
+            Fügt Mullvad-WireGuard-SOCKS5-Relays als Proxys hinzu (eine eigene Exit-IP pro
+            Relay). ⚠️ Nur erreichbar, wenn der Container <b>im Mullvad-WireGuard-Tunnel</b> läuft
+            (siehe UNRAID.md). Wird daher ohne Test hinzugefügt — danach „Alle testen".
+          </p>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className="text-xs text-zinc-400">Land (ISO-Code, leer = alle)</label>
+              <Input placeholder="de" value={mvCountry}
+                onChange={(e) => setMvCountry(e.target.value)} />
+            </div>
+            <div className="w-28">
+              <label className="text-xs text-zinc-400">Anzahl (0 = alle)</label>
+              <Input value={mvLimit} onChange={(e) => setMvLimit(e.target.value)} />
+            </div>
+          </div>
+          <label className="flex items-center gap-2 text-sm text-zinc-300">
+            <input type="checkbox" checked={mvDaita}
+              onChange={(e) => setMvDaita(e.target.checked)} />
+            Nur DAITA-Relays
+          </label>
+          <Button className="w-full" disabled={mullvadMut.isPending}
+            onClick={() => mullvadMut.mutate()}>
+            {mullvadMut.isPending ? "lade Relays…" : "Relays hinzufügen"}
+          </Button>
+          {mvResult && (
+            <div className="rounded-md border border-zinc-700 bg-zinc-900/50 p-3 text-sm">
+              <span className="text-emerald-400">✅ {mvResult.added} hinzugefügt</span>
+              {" · "}
+              <span className="text-zinc-400">{mvResult.skipped_duplicate} Duplikate</span>
             </div>
           )}
         </div>

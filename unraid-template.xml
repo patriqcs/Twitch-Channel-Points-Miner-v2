@@ -31,4 +31,10 @@
   <Config Name="WEB_PORT" Target="WEB_PORT" Default="8000" Mode=""
           Description="Container-internal port uvicorn binds to. Leave at 8000 for normal use (change only the WebUI Port host mapping above). If you set this to another value, set the WebUI Port container/target port to the SAME value."
           Type="Variable" Display="advanced" Required="false" Mask="false">8000</Config>
+  <Config Name="PROXY_ALLOW_DIRECT" Target="PROXY_ALLOW_DIRECT" Default="true" Mode=""
+          Description="If a running account's proxy dies and no working proxy is free, keep mining WITHOUT a proxy as a last resort (re-attaches a proxy once one works again)."
+          Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="PROXY_CHECK_INTERVAL" Target="PROXY_CHECK_INTERVAL" Default="120" Mode=""
+          Description="Seconds between proxy health checks of running accounts."
+          Type="Variable" Display="advanced" Required="false" Mask="false">120</Config>
 </Container>

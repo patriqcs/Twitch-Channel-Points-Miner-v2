@@ -66,6 +66,14 @@ class ProxyBulkDeleteResult(BaseModel):
     skipped_in_use: int = 0
 
 
+class MullvadImport(BaseModel):
+    # Add Mullvad WireGuard SOCKS5 relays as proxies. Only reachable while the
+    # container runs inside a Mullvad WireGuard tunnel (see UNRAID.md).
+    country_code: Optional[str] = None  # e.g. "de"; None = all countries
+    limit: int = 10                     # how many relays to add (0 = all)
+    daita_only: bool = False            # only DAITA-enabled relays
+
+
 class ProxyImport(BaseModel):
     # One proxy per line: "scheme://[user:pass@]host:port" or bare "host:port".
     # Blank lines and lines starting with '#' are ignored.
