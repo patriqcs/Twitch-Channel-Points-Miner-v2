@@ -73,6 +73,11 @@ nicht gebaut. Accounts legt der Nutzer selbst an; die UI importiert/verwaltet si
   `/ws/status` (alle Account-Status alle 2s), `/ws/events` (neue Events live). REST-History
   (`metrics.py`): `/api/accounts/{id}/points` (Balance-Serie), `/api/accounts/{id}/events`. Getestet:
   Status-Push, Live-Events, Log-Tail+Live-Zeile, Punkte-Serie, 404.
-- Phasen 6–7: noch nicht implementiert.
+- ✅ **Phase 6 fertig** (2026-06-16): `frontend/` — Vite + React + TS + Tailwind + TanStack Query +
+  Recharts. Seiten: Dashboard (Punkte-Charts + Live-Status via WS, Start/Stop-All), Accounts (CRUD,
+  Start/Stop/Restart, Device-Code-Login-Modal, Login-Test, Proxy-Zuordnung mit 5/5-Anzeige), Proxys
+  (CRUD + Test mit Exit-IP/Latenz), Einstellungen (Streamer-Liste), Logs (Live-WS-Tail). Mobile-first
+  (Sidebar + Mobile-Topnav). `npm run build` (tsc + vite) läuft fehlerfrei durch.
+- Phase 7: noch nicht implementiert.
 - Vorhandenes Fundament (frühere Session, uncommittet): `run.py`, `docker-entrypoint.sh`,
   `Dockerfile.unraid`, `docker-compose.yml`, `start_all.sh`/`stop_all.sh`, `UNRAID.md`, `.gitignore`.
