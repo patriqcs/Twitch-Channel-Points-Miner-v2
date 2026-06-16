@@ -113,6 +113,15 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ text }),
     }),
+  testAllProxies: () =>
+    req<(ProxyTestResult & { id: number; name: string })[]>("/api/proxies/test-all", {
+      method: "POST",
+    }),
+  bulkDeleteProxies: (ids: number[]) =>
+    req<{ deleted: number; skipped_in_use: number }>("/api/proxies/bulk-delete", {
+      method: "POST",
+      body: JSON.stringify({ ids }),
+    }),
   updateProxy: (id: number, b: Record<string, unknown>) =>
     req<Proxy>(`/api/proxies/${id}`, { method: "PATCH", body: JSON.stringify(b) }),
   deleteProxy: (id: number) =>

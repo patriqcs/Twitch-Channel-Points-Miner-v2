@@ -48,6 +48,24 @@ class ProxyTestResult(BaseModel):
     error: Optional[str] = None
 
 
+class ProxyBulkTestItem(BaseModel):
+    id: int
+    name: str
+    ok: bool
+    ip: Optional[str] = None
+    latency_ms: Optional[int] = None
+    error: Optional[str] = None
+
+
+class ProxyBulkDelete(BaseModel):
+    ids: List[int]
+
+
+class ProxyBulkDeleteResult(BaseModel):
+    deleted: int = 0
+    skipped_in_use: int = 0
+
+
 class ProxyImport(BaseModel):
     # One proxy per line: "scheme://[user:pass@]host:port" or bare "host:port".
     # Blank lines and lines starting with '#' are ignored.

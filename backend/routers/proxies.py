@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
 """Proxy CRUD + connectivity test."""
+from concurrent.futures import ThreadPoolExecutor
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, func, select
 
@@ -8,6 +10,9 @@ from backend.db import get_session
 from backend.models import Account, Proxy
 from backend.proxy_util import to_engine_proxy
 from backend.schemas import (
+    ProxyBulkDelete,
+    ProxyBulkDeleteResult,
+    ProxyBulkTestItem,
     ProxyCreate,
     ProxyImport,
     ProxyImportError,
@@ -16,6 +21,10 @@ from backend.schemas import (
     ProxyTestResult,
     ProxyUpdate,
 )
+
+# Cap concurrency so a huge proxy list doesn't open hundreds of sockets at once.
+_TEST_TIMEOUT = 8
+_TEST_WORKERS = 20
 
 router = APIRouter(prefix="/api/proxies", tags=["proxies"])
 
@@ -95,6 +104,52 @@ def import_proxies(payload: ProxyImport, session: Session = Depends(get_session)
         result.proxies.append(_to_read(session, p))
         result.added += 1
 
+    session.commit()
+    return result
+
+
+@router.post("/test-all", response_model=list[ProxyBulkTestItem])
+def test_all_proxies(session: Session = Depends(get_session)):
+    """Test every proxy concurrently and return one result per proxy."""
+    proxies = session.exec(select(Proxy)).all()
+    # Build engine proxies (decrypts creds) in the request thread; the DB session
+    # is not touched inside worker threads.
+    jobs = [(p.id, p.name, to_engine_proxy(p)) for p in proxies]
+
+    def _run(job):
+        pid, name, ep = job
+        try:
+            r = ep.test_proxy(timeout=_TEST_TIMEOUT)
+        except Exception as exc:  # noqa: BLE001
+            r = {"ok": False, "error": str(exc)}
+        return ProxyBulkTestItem(
+            id=pid, name=name, ok=bool(r.get("ok")),
+            ip=r.get("ip"), latency_ms=r.get("latency_ms"), error=r.get("error"),
+        )
+
+    if not jobs:
+        return []
+    with ThreadPoolExecutor(max_workers=min(_TEST_WORKERS, len(jobs))) as pool:
+        return list(pool.map(_run, jobs))
+
+
+@router.post("/bulk-delete", response_model=ProxyBulkDeleteResult)
+def bulk_delete_proxies(payload: ProxyBulkDelete,
+                        session: Session = Depends(get_session)):
+    """Delete the given proxies. Proxies still assigned to an account are kept."""
+    result = ProxyBulkDeleteResult()
+    for pid in payload.ids:
+        p = session.get(Proxy, pid)
+        if p is None:
+            continue
+        in_use = session.exec(
+            select(func.count()).select_from(Account).where(Account.proxy_id == pid)
+        ).one()
+        if in_use:
+            result.skipped_in_use += 1
+            continue
+        session.delete(p)
+        result.deleted += 1
     session.commit()
     return result
 

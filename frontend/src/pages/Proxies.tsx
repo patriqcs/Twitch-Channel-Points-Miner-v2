@@ -59,11 +59,59 @@ export default function Proxies() {
     }
   };
 
+  const [testingAll, setTestingAll] = useState(false);
+  const testAll = async () => {
+    if (proxies.length === 0) return;
+    setTestingAll(true);
+    setTests(Object.fromEntries(proxies.map((p) => [p.id, "loading" as const])));
+    try {
+      const results = await api.testAllProxies();
+      setTests(Object.fromEntries(results.map((r) => [r.id, r])));
+    } catch (e) {
+      setErr((e as Error).message);
+      setTests({});
+    } finally {
+      setTestingAll(false);
+    }
+  };
+
+  // ids of proxies whose last test failed
+  const brokenIds = proxies
+    .filter((p) => { const t = tests[p.id]; return t && t !== "loading" && !t.ok; })
+    .map((p) => p.id);
+
+  const deleteBroken = async () => {
+    if (brokenIds.length === 0) return;
+    if (!confirm(`${brokenIds.length} kaputte Proxys löschen?`)) return;
+    try {
+      const r = await api.bulkDeleteProxies(brokenIds);
+      setErr(
+        r.skipped_in_use
+          ? `${r.deleted} gelöscht, ${r.skipped_in_use} übersprungen (einem Account zugewiesen).`
+          : null
+      );
+      setTests((t) => {
+        const next = { ...t };
+        brokenIds.forEach((id) => delete next[id]);
+        return next;
+      });
+      invalidate();
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Proxys</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" disabled={testingAll || proxies.length === 0} onClick={testAll}>
+            <Wifi size={15} /> {testingAll ? "teste…" : "Alle testen"}
+          </Button>
+          <Button variant="danger" disabled={brokenIds.length === 0} onClick={deleteBroken}>
+            <Trash2 size={15} /> Kaputte löschen{brokenIds.length ? ` (${brokenIds.length})` : ""}
+          </Button>
           <Button variant="outline" onClick={() => { setImportResult(null); setShowImport(true); }}>
             <Upload size={15} /> Import .txt
           </Button>
