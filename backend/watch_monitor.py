@@ -134,15 +134,16 @@ class WatchHealthMonitor:
         for u in to_fix:
             self._strikes[u] = 0
             msg = (f"peers earned ~{int(median_earn)} pts in {window}s but this "
-                   f"account earned 0 (online but not watching) -> failover + restart")
+                   f"account earned 0 (online but not watching) -> failover")
             logger.warning("[%s] %s", u, msg)
             with Session(engine) as session:
                 aid = ids[u]
-                # 'proxy_error' lets the proxy monitor move it to a working proxy;
-                # the restart refreshes the session (fresh spade_url, sockets).
+                # Emit a 'proxy_error': the proxy monitor owns the response — it
+                # moves the account to a working proxy AND restarts it (one
+                # restart). We deliberately do NOT restart here too, or the two
+                # would stack into a churn loop that itself prevents earning.
                 session.add(Event(account_id=aid, type="status",
                                   reason="watch_stalled", message=msg))
                 session.add(Event(account_id=aid, type="proxy_error",
                                   message="watch stalled vs peers"))
                 session.commit()
-            self.manager.restart(u)

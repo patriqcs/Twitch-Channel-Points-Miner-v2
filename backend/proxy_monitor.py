@@ -36,6 +36,7 @@ class ProxyHealthMonitor:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._fails: dict[str, int] = {}  # username -> consecutive probe failures
+        self._last_change: dict[str, object] = {}  # username -> last failover ts (naive UTC)
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -70,16 +71,29 @@ class ProxyHealthMonitor:
         except Exception:  # noqa: BLE001
             return False
 
-    def _recent_proxy_errors(self, session: Session) -> set[int]:
-        """account_ids that reported a runtime proxy error within the last window."""
+    @staticmethod
+    def _naive(dt):
+        """SQLite returns naive datetimes; utcnow() is aware. Compare apples to
+        apples by stripping tzinfo (all our timestamps are UTC)."""
+        if dt is not None and getattr(dt, "tzinfo", None) is not None:
+            return dt.replace(tzinfo=None)
+        return dt
+
+    def _recent_proxy_errors(self, session: Session) -> dict[int, object]:
+        """account_id -> latest runtime proxy-error timestamp within the window."""
         window = max(config.PROXY_CHECK_INTERVAL * 2, 90)
         since = utcnow() - timedelta(seconds=window)
         rows = session.exec(
-            select(Event.account_id)
+            select(Event.account_id, Event.ts)
             .where(Event.type == PROXY_ERROR_EVENT)
             .where(Event.ts >= since)
         ).all()
-        return set(rows)
+        latest: dict[int, object] = {}
+        for aid, ts in rows:
+            ts = self._naive(ts)
+            if aid not in latest or ts > latest[aid]:
+                latest[aid] = ts
+        return latest
 
     def _tick(self) -> None:
         # Phase 1 — snapshot (SHORT db session): copy everything we need into plain
@@ -126,11 +140,17 @@ class ProxyHealthMonitor:
             if not self.manager.is_running(uname):
                 self._fails.pop(uname, None)
                 continue
+            # Only count a runtime error that was reported AFTER our last
+            # failover for this account — otherwise a single (or synthetic)
+            # proxy_error lingers in the window and makes us thrash through a new
+            # proxy on every tick for ~240s, even after a healthy one was found.
+            err_ts = errored.get(aid)
+            last_chg = self._last_change.get(uname)
+            runtime_bad = err_ts is not None and (last_chg is None or err_ts > last_chg)
             if pid is not None:
-                if healthy(pid) and aid not in errored:
+                if healthy(pid) and not runtime_bad:
                     self._fails[uname] = 0
                     continue
-                runtime_bad = aid in errored
                 n = self._fails.get(uname, 0) + 1
                 self._fails[uname] = n
                 if not runtime_bad and n < config.PROXY_FAIL_THRESHOLD:
@@ -174,4 +194,5 @@ class ProxyHealthMonitor:
         for aid, uname, new_pid, change, msg in decisions:
             logger.info("[%s] %s", uname, msg)
             if change:
+                self._last_change[uname] = self._naive(utcnow())
                 self.manager.restart(uname)
