@@ -11,6 +11,7 @@ Lifecycle:
 Username: ENV TWITCH_USERNAME or argv[1].
 Backend:  ENV BACKEND_URL + INTERNAL_TOKEN (injected by MinerManager).
 """
+import json
 import logging
 import os
 import sys
@@ -29,7 +30,48 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
 HEADERS = {"X-Internal-Token": INTERNAL_TOKEN}
 
+# Auto-follow a channel once an account becomes subscribed to it. Subscribers
+# can follow even when a channel requires phone verification, and the sub shows
+# up as a SUB_* points multiplier the miner already loads — so we piggyback on
+# that signal and fire a one-time follow through the account's proxy + token.
+AUTO_FOLLOW_ON_SUB = os.environ.get("AUTO_FOLLOW_ON_SUB", "1").strip().lower() in (
+    "1", "true", "yes", "on"
+)
+FOLLOW_RETRY_COOLDOWN = float(os.environ.get("AUTO_FOLLOW_RETRY_COOLDOWN", "1800"))
+# Raw mutation (the miner's TV client-id needs no integrity header for this).
+FOLLOW_MUTATION = (
+    "mutation FollowUser($input: FollowUserInput!){"
+    "followUser(input:$input){follow{followedAt user{login}} error{code}}}"
+)
+
 logger = logging.getLogger("miner_runner")
+
+
+# ------------------------------------------------------ auto-follow persistence
+def _follow_state_path(username: str) -> str:
+    base = os.environ.get("DATA_DIR") or os.getcwd()
+    return os.path.join(base, "auto_follow", f"{username}.json")
+
+
+def _load_followed(username: str) -> set:
+    """Channel ids this account has already been auto-followed to (persisted)."""
+    try:
+        with open(_follow_state_path(username), encoding="utf-8") as f:
+            return {str(x) for x in json.load(f)}
+    except (OSError, ValueError):
+        return set()
+
+
+def _save_followed(username: str, followed: set) -> None:
+    path = _follow_state_path(username)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = f"{path}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(sorted(followed), f)
+        os.replace(tmp, path)
+    except OSError as e:  # noqa: BLE001
+        logger.warning("could not persist auto-follow state for %s: %s", username, e)
 
 
 # ---------------------------------------------------------------- backend I/O
@@ -147,6 +189,9 @@ class Reporter(threading.Thread):
         self.interval = interval
         self._stop = threading.Event()
         self._announced = False
+        # auto-follow-on-sub state
+        self._followed = _load_followed(username) if AUTO_FOLLOW_ON_SUB else set()
+        self._follow_retry: dict[str, float] = {}  # channel_id -> next retry (monotonic)
 
     def run(self):
         while not self._stop.is_set():
@@ -158,7 +203,72 @@ class Reporter(threading.Thread):
                     report(self.username, "login")
                 total = sum(int(getattr(s, "channel_points", 0) or 0) for s in streamers)
                 report(self.username, "points_snapshot", balance=total)
+                if AUTO_FOLLOW_ON_SUB:
+                    try:
+                        self._auto_follow_subscribed(streamers)
+                    except Exception:  # noqa: BLE001
+                        logger.exception("auto-follow check failed")
             self._stop.wait(self.interval)
+
+    # ---- auto-follow on subscription ----
+    @staticmethod
+    def _is_subscribed(streamer) -> bool:
+        """A SUB_* points multiplier means this account is subscribed here."""
+        for m in (getattr(streamer, "activeMultipliers", None) or []):
+            if isinstance(m, dict) and str(m.get("reasonCode", "")).startswith("SUB_"):
+                return True
+        return False
+
+    def _auto_follow_subscribed(self, streamers) -> None:
+        now = time.monotonic()
+        for s in streamers:
+            cid = getattr(s, "channel_id", None)
+            if not cid:
+                continue
+            cid = str(cid)
+            if cid in self._followed or not self._is_subscribed(s):
+                continue
+            if now < self._follow_retry.get(cid, 0.0):
+                continue  # backing off after a recent failure
+            login = str(getattr(s, "username", "?"))
+            ok, err = self._do_follow(cid)
+            if ok:
+                self._followed.add(cid)
+                _save_followed(self.username, self._followed)
+                logger.info("[%s] auto-followed %s after subscription", self.username, login)
+                report(self.username, "follow", streamer=login,
+                       message=f"auto-followed after subscription ({login})")
+            else:
+                self._follow_retry[cid] = now + FOLLOW_RETRY_COOLDOWN
+                logger.warning("[%s] auto-follow of %s failed: %s", self.username, login, err)
+                report(self.username, "follow_failed", streamer=login, message=str(err)[:120])
+
+    def _do_follow(self, channel_id: str):
+        """Fire followUser through the miner's authenticated GQL (proxy + token).
+        Returns (ok, error_or_None)."""
+        twitch = getattr(self.miner, "twitch", None)
+        if twitch is None:
+            return False, "no twitch client"
+        payload = {
+            "operationName": "FollowUser",
+            "query": FOLLOW_MUTATION,
+            "variables": {"input": {"targetID": str(channel_id),
+                                    "disableNotifications": True}},
+        }
+        try:
+            resp = twitch.post_gql_request(payload)
+        except Exception as e:  # noqa: BLE001
+            return False, f"request error: {e}"
+        if not resp:
+            return False, "empty response (network/proxy)"
+        if resp.get("errors"):
+            return False, str(resp["errors"][0].get("message", "gql error"))
+        fu = (resp.get("data") or {}).get("followUser")
+        if isinstance(fu, dict) and fu.get("error"):
+            return False, str(fu["error"].get("code") or "unknown error")
+        if isinstance(fu, dict) and fu.get("follow"):
+            return True, None
+        return False, "unexpected response"
 
     def stop(self):
         self._stop.set()
