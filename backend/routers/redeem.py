@@ -79,7 +79,7 @@ def channel_points(account_id: int, channel: str,
 class AllRedeemRequest(BaseModel):
     channel: str
     reward_id: str
-    count: int | None = None      # total redemptions to distribute (default: one per account)
+    count: int | None = None      # total redemptions to distribute (default: 1)
     global_delay: float | None = None  # override the per-reward global spacing
     prompt: str | None = None
 
@@ -133,7 +133,9 @@ def redeem_all(body: AllRedeemRequest, session: Session = Depends(get_session)):
     if reward is None or not candidates:
         raise HTTPException(400, "no usable account login")
 
-    count = body.count if body.count and body.count > 0 else len(candidates)
+    # Empty/unset count -> a single redemption (NOT one-per-account); the user
+    # must type a number to spam more across the accounts.
+    count = body.count if body.count and body.count > 0 else 1
     count = min(count, 500)
     redeem_mod.schedule_master_redeem(
         channel_id, reward, candidates, cd_secs, gdelay, count, _log_event

@@ -184,7 +184,7 @@ export default function Redeem() {
                 <div>
                   <label className="text-[11px] text-zinc-400">Anzahl (gesamt)</label>
                   <Input className="w-20" type="number" min={1}
-                    placeholder={String(accounts.length)}
+                    placeholder="1"
                     value={allCount[r.id] ?? ""}
                     onChange={(e) => setAllCount((c) => ({ ...c, [r.id]: e.target.value }))}
                     onBlur={() => {
