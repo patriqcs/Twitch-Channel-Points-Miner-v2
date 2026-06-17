@@ -18,6 +18,7 @@ from backend import config
 from backend.db import init_db
 from backend.manager import manager
 from backend.proxy_monitor import ProxyHealthMonitor
+from backend.watch_monitor import WatchHealthMonitor
 from backend.routers import (
     accounts, internal, metrics, proxies, redeem, settings, system, ws,
 )
@@ -29,6 +30,7 @@ FRONTEND_DIR = Path(
 logger = logging.getLogger("backend")
 
 proxy_monitor = ProxyHealthMonitor(manager)
+watch_monitor = WatchHealthMonitor(manager)
 
 
 def _reset_statuses_to_stopped() -> None:
@@ -138,6 +140,8 @@ async def lifespan(app: FastAPI):
     manager.start_reaper()
     if config.PROXY_MONITOR_ENABLED:
         proxy_monitor.start()
+    if config.WATCH_MONITOR_ENABLED:
+        watch_monitor.start()
     if config.AUTOSTART_ENABLED:
         _autostart_when_ready()
         logger.info("Auto-start armed (waits until proxies reachable, max %ss).",
@@ -147,6 +151,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        watch_monitor.stop()
         proxy_monitor.stop()
         manager.shutdown()
 

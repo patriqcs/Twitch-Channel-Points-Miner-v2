@@ -93,7 +93,7 @@ class ProxyErrorReporter(logging.Handler):
         "Remote end closed connection",
     )
 
-    def __init__(self, username: str, threshold: int = 4, window: float = 90.0,
+    def __init__(self, username: str, threshold: int = 3, window: float = 120.0,
                  cooldown: float = 60.0):
         super().__init__(level=logging.ERROR)
         self.username = username
@@ -102,6 +102,7 @@ class ProxyErrorReporter(logging.Handler):
         self.cooldown = cooldown
         self._hits: list[float] = []
         self._last_report = 0.0
+        self._episode = False  # inside a sustained-error episode?
 
     def emit(self, record: logging.LogRecord) -> None:
         try:
@@ -111,17 +112,33 @@ class ProxyErrorReporter(logging.Handler):
         if not any(m in msg for m in self.MARKERS):
             return
         now = time.monotonic()
-        self._hits = [t for t in self._hits if now - t <= self.window]
-        self._hits.append(now)
-        if len(self._hits) >= self.threshold and (now - self._last_report) >= self.cooldown:
+        recent = [t for t in self._hits if now - t <= self.window]
+        if not recent:
+            self._episode = False  # window went quiet -> a fresh episode begins
+        recent.append(now)
+        self._hits = recent
+        if (now - self._last_report) < self.cooldown:
+            return
+        # Fire on an initial burst (threshold), then KEEP nudging the monitor
+        # every cooldown while errors persist — a slow trickle of failures (one
+        # every couple minutes) would otherwise never re-hit the threshold, so
+        # the backend would stop failing over even though the proxy is still bad.
+        if len(self._hits) >= self.threshold or self._episode:
             self._last_report = now
+            self._episode = True
             self._hits.clear()
             report(self.username, "proxy_error", message=msg[:200])
 
 
 # ---------------------------------------------------------------- reporter
 class Reporter(threading.Thread):
-    """Posts 'running'/'login' once streamers load, then periodic point totals."""
+    """Posts 'running'/'login' once streamers load, then periodic point totals.
+
+    The point totals double as the data source for the backend's peer watchdog:
+    since every account watches the same streamers, the backend can compare the
+    point progress across accounts and spot one that earns nothing while its
+    peers do (a half-broken proxy: online via PubSub, but failing watch POSTs).
+    """
 
     def __init__(self, username: str, miner, interval: int = 60):
         super().__init__(name="reporter", daemon=True)

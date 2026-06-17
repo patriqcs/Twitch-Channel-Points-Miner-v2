@@ -61,6 +61,41 @@ PROXY_ALLOW_DIRECT = _bool_env("PROXY_ALLOW_DIRECT", True)
 AUTOSTART_ENABLED = _bool_env("AUTOSTART_ENABLED", True)
 AUTOSTART_MAX_WAIT = int(os.environ.get("AUTOSTART_MAX_WAIT", "180"))  # seconds
 
+# ---- Miner self-repair (watchdog) ----
+# When a miner subprocess for an *enabled* account exits unexpectedly, the
+# reaper restarts it automatically with exponential backoff. A crash-loop guard
+# grows the delay (BASE * 2**(n-1), capped at MAX) so a permanently-broken
+# account (e.g. expired cookie) retries slowly instead of hot-looping. A run
+# that stayed up at least HEALTHY_UPTIME seconds resets the failure streak.
+MINER_AUTORESTART_ENABLED = _bool_env("MINER_AUTORESTART_ENABLED", True)
+MINER_RESTART_BACKOFF_BASE = int(os.environ.get("MINER_RESTART_BACKOFF_BASE", "5"))     # s
+MINER_RESTART_BACKOFF_MAX = int(os.environ.get("MINER_RESTART_BACKOFF_MAX", "300"))     # s
+MINER_HEALTHY_UPTIME = int(os.environ.get("MINER_HEALTHY_UPTIME", "120"))               # s
+
+# Heartbeat watchdog: a running miner posts a points_snapshot every ~60s. If the
+# backend has seen NO event from a running account within HEARTBEAT_TIMEOUT, the
+# process is considered hung (alive but not mining) and gets restarted. GRACE is
+# the minimum uptime before a freshly-started miner is eligible (give it time to
+# log in and produce its first event).
+MINER_HEARTBEAT_ENABLED = _bool_env("MINER_HEARTBEAT_ENABLED", True)
+MINER_HEARTBEAT_INTERVAL = int(os.environ.get("MINER_HEARTBEAT_INTERVAL", "30"))        # s
+MINER_HEARTBEAT_TIMEOUT = int(os.environ.get("MINER_HEARTBEAT_TIMEOUT", "300"))         # s
+MINER_HEARTBEAT_GRACE = int(os.environ.get("MINER_HEARTBEAT_GRACE", "240"))             # s
+
+# ---- Peer watch watchdog ----
+# Every account watches the SAME streamers, so they form a control group: over a
+# rolling WINDOW we compare each running account's point progress. If a healthy
+# majority earns points (streamers are live & paying) but one account earns ~0,
+# that account is half-broken (online via PubSub, but its watch POSTs fail) and
+# gets failed over + restarted. Needs at least MIN_COHORT comparable accounts;
+# acts only after STALL_STRIKES consecutive checks to avoid flapping.
+WATCH_MONITOR_ENABLED = _bool_env("WATCH_MONITOR_ENABLED", True)
+WATCH_CHECK_INTERVAL = int(os.environ.get("WATCH_CHECK_INTERVAL", "90"))    # s
+WATCH_WINDOW = int(os.environ.get("WATCH_WINDOW", "600"))                   # s
+WATCH_MIN_COHORT = int(os.environ.get("WATCH_MIN_COHORT", "3"))
+WATCH_MIN_EARN = int(os.environ.get("WATCH_MIN_EARN", "10"))               # peer median pts
+WATCH_STALL_STRIKES = int(os.environ.get("WATCH_STALL_STRIKES", "2"))
+
 # ---- Event retention ----
 # points_snapshot events are written every ~60s per account and would grow the
 # DB forever; prune the high-volume ones older than this many days (0 = keep all).
