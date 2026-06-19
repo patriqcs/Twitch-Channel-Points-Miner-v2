@@ -158,11 +158,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Twitch Miner Manager", version="0.1.0", lifespan=lifespan)
 
-# Frontend is served same-origin in production; permissive in dev.
+# Frontend is served same-origin in production; the Vite dev server is the only
+# cross-origin caller (CORS_ORIGINS). The API carries no browser credentials, so
+# allow_credentials stays False — this also avoids the invalid "wildcard +
+# credentials" combo that browsers reject anyway.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=config.CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )

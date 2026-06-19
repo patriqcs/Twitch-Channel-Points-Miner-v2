@@ -14,6 +14,7 @@ proxy-aware TwitchLogin so login traffic also goes through the account's proxy.
 import logging
 import string
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from secrets import choice
 
@@ -94,8 +95,9 @@ class LoginService:
         return state
 
     def _poll(self, username, login, device_code, interval, state):
-        stop = threading.Event()
-        while not stop.wait(max(interval, 1)):
+        interval = max(interval, 1)
+        while True:
+            time.sleep(interval)
             if state.expires_at and datetime.now(timezone.utc) >= state.expires_at:
                 state.status = "expired"
                 return
@@ -113,6 +115,10 @@ class LoginService:
                 continue
 
             if resp.status_code != 200:
+                # Twitch returns 'slow_down' when we poll too fast -> back off as
+                # the spec requires, otherwise we keep getting rejected.
+                if "slow_down" in (resp.text or ""):
+                    interval += 5
                 # 400 = user hasn't authorized yet -> keep polling.
                 continue
 
