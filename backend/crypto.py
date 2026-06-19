@@ -30,7 +30,20 @@ def _load_or_create_key() -> bytes:
     return key
 
 
-_fernet = Fernet(_load_or_create_key())
+def _build_fernet() -> Fernet:
+    key = _load_or_create_key()
+    try:
+        return Fernet(key)
+    except (ValueError, TypeError) as e:
+        raise RuntimeError(
+            "Invalid SECRET_KEY: it must be a 32-byte url-safe base64 Fernet key. "
+            "Generate one with: "
+            "python -c \"from cryptography.fernet import Fernet; "
+            "print(Fernet.generate_key().decode())\""
+        ) from e
+
+
+_fernet = _build_fernet()
 
 
 def encrypt(plaintext) -> "str | None":

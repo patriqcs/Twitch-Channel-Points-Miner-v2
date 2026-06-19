@@ -40,7 +40,12 @@ class Account(SQLModel, table=True):
     last_login_at: Optional[datetime] = None
 
     proxy: Optional[Proxy] = Relationship(back_populates="accounts")
-    events: List["Event"] = Relationship(back_populates="account")
+    # delete-orphan: removing an account also removes its events. Without this,
+    # SQLAlchemy tries to NULL the (NOT NULL) event.account_id -> IntegrityError.
+    events: List["Event"] = Relationship(
+        back_populates="account",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+    )
 
 
 class Event(SQLModel, table=True):
@@ -48,7 +53,8 @@ class Event(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     account_id: int = Field(index=True, foreign_key="account.id")
     ts: datetime = Field(default_factory=utcnow, index=True)
-    # points_earned | points_spent | status | login | error | watch
+    # points_snapshot | status | login | error | proxy | proxy_error |
+    # redeem | follow | follow_failed
     type: str = Field(index=True)
     streamer: Optional[str] = None
     points: Optional[int] = None

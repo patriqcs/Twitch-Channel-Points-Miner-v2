@@ -5,6 +5,7 @@ Protected by a shared token (X-Internal-Token header). Not for the browser.
   GET  /internal/config/{username}  -> streamers + decrypted proxy URL + settings
   POST /internal/events             -> record a points/status/login/error event
 """
+import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -22,7 +23,7 @@ STREAMERS_KEY = "STREAMERS"
 
 
 def require_token(x_internal_token: str = Header(default="")):
-    if x_internal_token != config.get_internal_token():
+    if not secrets.compare_digest(x_internal_token, config.get_internal_token()):
         raise HTTPException(status_code=401, detail="bad internal token")
 
 

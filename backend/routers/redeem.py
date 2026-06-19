@@ -170,6 +170,13 @@ def redeem(account_id: int, body: RedeemRequest,
 
     results = []
     for _ in range(count):
+        # Respect this account's own cooldown: firing into an active cooldown only
+        # wastes calls and can provoke a longer server-side cooldown.
+        remaining = redeem_mod.cooldown_remaining(acc.id, reward["id"])
+        if remaining > 0:
+            results.append({"ok": False, "reason": "cooldown",
+                            "message": f"Cooldown aktiv ({remaining:.0f}s)"})
+            break
         r = redeem_mod.redeem_reward(token, proxies, state["channelId"], reward, body.prompt)
         results.append(r)
         if r["ok"]:

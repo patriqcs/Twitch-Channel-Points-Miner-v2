@@ -35,6 +35,18 @@ BACKEND_URL = os.environ.get("BACKEND_URL", f"http://127.0.0.1:{WEB_PORT}")
 # Business rule: how many accounts may share one proxy (Phase 4 enforces it).
 MAX_ACCOUNTS_PER_PROXY = int(os.environ.get("MAX_ACCOUNTS_PER_PROXY", "5"))
 
+# CORS: the SPA is served same-origin in production, so cross-origin access is
+# only needed for the Vite dev server. Override with a comma-separated list (or
+# "*" to allow any origin). The API uses no browser credentials, so credentials
+# are never echoed — keeping the wildcard a valid, safe combination.
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.environ.get(
+        "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+    ).split(",")
+    if o.strip()
+]
+
 
 def _bool_env(name: str, default: bool) -> bool:
     v = os.environ.get(name)
