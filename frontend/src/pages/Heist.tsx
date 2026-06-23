@@ -67,10 +67,26 @@ export default function Heist() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Heist</h1>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={cfg.enabled} onChange={(e) => set("enabled", e.target.checked)} />
-          Modul aktiviert
-        </label>
+        <div className="flex items-center gap-3">
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (!confirm("!play mit ALLEN eingeloggten Accounts schreiben?")) return;
+              try {
+                const r = await api.heistPlayAll();
+                setMsg(`✅ !play wird an ${r.scheduled} Account(s) gesendet (gestaffelt)`);
+              } catch (e) {
+                setMsg(`❌ ${(e as Error).message}`);
+              }
+            }}
+          >
+            !play (alle)
+          </Button>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={cfg.enabled} onChange={(e) => set("enabled", e.target.checked)} />
+            Modul aktiviert
+          </label>
+        </div>
       </div>
 
       {/* Live status */}

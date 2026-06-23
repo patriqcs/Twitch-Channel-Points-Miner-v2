@@ -227,6 +227,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ seconds: seconds ?? null }),
     }),
+  heistPlayAll: (command?: string, delay?: number) =>
+    req<{ scheduled: number; command: string; channel: string }>("/api/heist/play-all", {
+      method: "POST",
+      body: JSON.stringify({ command: command ?? null, delay: delay ?? null }),
+    }),
 
   // settings
   getStreamers: () => req<{ streamers: string[]; raw: string }>("/api/settings/streamers"),

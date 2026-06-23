@@ -371,3 +371,25 @@ def fire_heist(record: dict, channel: str, start_command: str,
     client.die()
     t.join(timeout=5)
     return sent
+
+
+def broadcast_command(records: list, channel: str, command: str,
+                      delay: float = 1.0) -> None:
+    """Fire `command` (e.g. "!play") once from every account, in the background.
+
+    Sequential with a small delay between accounts so it doesn't look like a
+    simultaneous spam burst. Each uses its own proxy-routed short-lived
+    connection (same mechanism as fire_heist), with a short linger since we don't
+    need to wait for a bot reply.
+    """
+    def _run():
+        for rec in records:
+            try:
+                fire_heist(rec, channel, command, linger=2.0)
+            except Exception:  # noqa: BLE001
+                logger.exception("broadcast %s failed for %s", command,
+                                 rec.get("username"))
+            time.sleep(max(0.0, delay))
+        logger.info("broadcast %r done for %d account(s)", command, len(records))
+
+    threading.Thread(target=_run, name="heist-broadcast", daemon=True).start()

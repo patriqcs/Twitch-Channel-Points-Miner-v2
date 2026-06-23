@@ -127,6 +127,38 @@ def test_fire(account_id: int, body: HeistTest,
             "command": command}
 
 
+class PlayAll(BaseModel):
+    command: str | None = None   # default "!play"
+    delay: float | None = None   # seconds between accounts (anti-spam stagger)
+
+
+@router.post("/play-all")
+def play_all(body: PlayAll, session: Session = Depends(get_session)):
+    """Fire a chat command (default !play) once from every logged-in account.
+
+    Runs in the background (one short-lived proxy-routed IRC connection per
+    account, small stagger between them). Uses the configured heist channel.
+    """
+    cfg = heist.get_config(session)
+    if not cfg["channel"]:
+        raise HTTPException(400, "no HEIST_CHANNEL configured")
+    command = (body.command or "!play").strip()
+    delay = body.delay if body.delay is not None else 1.0
+    records = []
+    for a in session.exec(select(Account)).all():
+        token = heist.redeem.account_auth_token(a.username)
+        if not token:
+            continue
+        ep = to_engine_proxy(session.get(Proxy, a.proxy_id)) if a.proxy_id else None
+        records.append({"id": a.id, "username": a.username, "token": token,
+                        "proxy": ep})
+    if not records:
+        raise HTTPException(400, "no logged-in accounts")
+    heist.broadcast_command(records, cfg["channel"], command, delay)
+    return {"scheduled": len(records), "command": command,
+            "channel": cfg["channel"]}
+
+
 class CooldownSet(BaseModel):
     seconds: float | None = None  # default: the configured start cooldown
 
