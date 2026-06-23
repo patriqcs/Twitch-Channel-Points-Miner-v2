@@ -119,5 +119,31 @@ def test_fire(account_id: int, body: HeistTest,
     rec = {"id": acc.id, "username": acc.username, "token": token, "proxy": ep}
     command = (body.command or cfg["start_command"]).strip()
     ok = heist.fire_heist(rec, cfg["channel"], command)
+    # A successful !heist really consumes the bot's per-account cooldown, so
+    # record it (only for the start command, not a join test).
+    if ok and command == cfg["start_command"]:
+        heist.set_cooldown(acc.id, cfg["start_cooldown"])
     return {"ok": ok, "username": acc.username, "channel": cfg["channel"],
             "command": command}
+
+
+class CooldownSet(BaseModel):
+    seconds: float | None = None  # default: the configured start cooldown
+
+
+@router.post("/cooldown/{account_id}")
+def set_account_cooldown(account_id: int, body: CooldownSet,
+                         session: Session = Depends(get_session)):
+    """Mark an account on the !heist start cooldown (live, in-process + persisted).
+
+    For accounts that fired a heist outside the scheduler (manual chat / test on
+    an older build) so the scheduler stops trying to open with them too early.
+    """
+    acc = session.get(Account, account_id)
+    if acc is None:
+        raise HTTPException(404, "account not found")
+    cfg = heist.get_config(session)
+    seconds = body.seconds if body.seconds is not None else cfg["start_cooldown"]
+    heist.set_cooldown(account_id, float(seconds))
+    return {"account_id": account_id,
+            "remaining": round(heist.cooldown_remaining(account_id), 1)}

@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type HeistConfig } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
 
@@ -11,6 +11,7 @@ const NUM_FIELDS: { key: keyof HeistConfig; label: string; hint: string }[] = [
 ];
 
 export default function Heist() {
+  const qc = useQueryClient();
   const [cfg, setCfg] = useState<HeistConfig | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -93,10 +94,20 @@ export default function Heist() {
                 <span>{o.username}{!o.logged_in && <span className="text-amber-400"> (kein Login)</span>}</span>
                 <div className="flex items-center gap-2">
                   <span className="tabular-nums text-xs text-zinc-400">{fmtCooldown(cooldownFor(o.id))}</span>
+                  <Button size="sm" variant="ghost" title="60-Min-Cooldown manuell setzen" onClick={async () => {
+                    try {
+                      await api.setHeistCooldown(o.id);
+                      qc.invalidateQueries({ queryKey: ["heist-status"] });
+                      setMsg(`✅ ${o.username}: Cooldown gesetzt`);
+                    } catch (e) { setMsg(`❌ ${(e as Error).message}`); }
+                  }}>CD</Button>
                   <Button size="sm" variant="ghost" onClick={async () => {
                     setMsg(`⏳ Teste !heist mit ${o.username}…`);
-                    try { const r = await api.heistTest(o.id); setMsg(r.ok ? `✅ ${o.username}: gesendet` : `❌ ${o.username}: fehlgeschlagen`); }
-                    catch (e) { setMsg(`❌ ${(e as Error).message}`); }
+                    try {
+                      const r = await api.heistTest(o.id);
+                      qc.invalidateQueries({ queryKey: ["heist-status"] });
+                      setMsg(r.ok ? `✅ ${o.username}: gesendet` : `❌ ${o.username}: fehlgeschlagen`);
+                    } catch (e) { setMsg(`❌ ${(e as Error).message}`); }
                   }}>Test</Button>
                 </div>
               </div>

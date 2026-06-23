@@ -222,6 +222,11 @@ export const api = {
       `/api/heist/test/${id}`,
       { method: "POST", body: JSON.stringify({ command: command ?? null }) }
     ),
+  setHeistCooldown: (id: number, seconds?: number) =>
+    req<{ account_id: number; remaining: number }>(`/api/heist/cooldown/${id}`, {
+      method: "POST",
+      body: JSON.stringify({ seconds: seconds ?? null }),
+    }),
 
   // settings
   getStreamers: () => req<{ streamers: string[]; raw: string }>("/api/settings/streamers"),
