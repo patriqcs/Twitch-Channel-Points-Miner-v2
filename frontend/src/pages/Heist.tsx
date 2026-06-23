@@ -63,6 +63,16 @@ export default function Heist() {
     return Math.max(0, base - (now - dataUpdatedAt) / 1000);
   };
 
+  const playOne = async (id: number, username: string) => {
+    setMsg(`⏳ !play mit ${username}…`);
+    try {
+      const r = await api.heistTest(id, "!play");
+      setMsg(r.ok ? `✅ ${username}: !play gesendet` : `❌ ${username}: fehlgeschlagen`);
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -125,6 +135,8 @@ export default function Heist() {
                       setMsg(r.ok ? `✅ ${o.username}: gesendet` : `❌ ${o.username}: fehlgeschlagen`);
                     } catch (e) { setMsg(`❌ ${(e as Error).message}`); }
                   }}>Test</Button>
+                  <Button size="sm" variant="ghost" title="!play mit diesem Account"
+                    onClick={() => playOne(o.id, o.username)}>!play</Button>
                 </div>
               </div>
             )) : <div className="text-zinc-600">keine</div>}
@@ -132,7 +144,11 @@ export default function Heist() {
           <div>
             <div className="text-zinc-500">Joiner (!join)</div>
             {status?.joiners.length ? status.joiners.map((j) => (
-              <div key={j.id}>{j.username}{!j.logged_in && <span className="text-amber-400"> (kein Login)</span>}</div>
+              <div key={j.id} className="flex items-center justify-between gap-2">
+                <span>{j.username}{!j.logged_in && <span className="text-amber-400"> (kein Login)</span>}</span>
+                <Button size="sm" variant="ghost" title="!play mit diesem Account"
+                  onClick={() => playOne(j.id, j.username)}>!play</Button>
+              </div>
             )) : <div className="text-zinc-600">keine</div>}
           </div>
         </div>
