@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 """Account CRUD, miner control, device-code login and login test."""
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, func, select
+from sqlmodel import Session, desc, func, select
 
 from backend import config, crypto
 from backend.db import get_session
 from backend.login_service import login_service
 from backend.manager import manager
-from backend.models import Account, Proxy
+from backend.models import Account, Event, Proxy
 from backend.proxy_util import to_engine_proxy
 from backend.schemas import AccountCreate, AccountRead, AccountUpdate
 
@@ -48,6 +48,23 @@ def _get(session: Session, account_id: int) -> Account:
 @router.get("", response_model=list[AccountRead])
 def list_accounts(session: Session = Depends(get_session)):
     return [_to_read(a) for a in session.exec(select(Account)).all()]
+
+
+# NOTE: must stay ABOVE the "/{account_id}" routes or "balances" would be parsed
+# as an account id. Latest points balance per account (newest points_snapshot),
+# for the dashboard total + sorting.
+@router.get("/balances")
+def account_balances(session: Session = Depends(get_session)):
+    out = []
+    for a in session.exec(select(Account)).all():
+        balance = session.exec(
+            select(Event.balance)
+            .where(Event.account_id == a.id, Event.type == "points_snapshot")
+            .order_by(desc(Event.id)).limit(1)
+        ).first()
+        out.append({"account_id": a.id, "username": a.username,
+                    "balance": balance})
+    return out
 
 
 @router.post("", response_model=AccountRead, status_code=201)

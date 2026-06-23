@@ -33,6 +33,15 @@ export default function Dashboard() {
   const [live, setLive] = useState<Record<string, string>>({});
   // live points appended from the events stream (per account id) — no polling
   const [livePoints, setLivePoints] = useState<Record<number, Pt[]>>({});
+  const [sortBy, setSortBy] = useState<"points_desc" | "points_asc" | "name" | "status">(
+    "points_desc"
+  );
+
+  // initial balances (latest snapshot per account); live updates override below
+  const { data: balances = [] } = useQuery({
+    queryKey: ["balances"],
+    queryFn: api.accountBalances,
+  });
 
   useJsonWs<StatusMsg>("/ws/status", (msg) => {
     if (msg.type === "status") {
@@ -53,6 +62,29 @@ export default function Dashboard() {
 
   const statusOf = (a: Account) => live[a.username] ?? a.status;
   const running = accounts.filter((a) => statusOf(a) === "running").length;
+
+  // current balance per account: newest live point if present, else REST snapshot
+  const balanceOf = (a: Account): number | null => {
+    const arr = livePoints[a.id];
+    if (arr && arr.length) return arr[arr.length - 1].balance;
+    const b = balances.find((x) => x.account_id === a.id);
+    return b ? b.balance : null;
+  };
+  const totalPoints = accounts.reduce((sum, a) => sum + (balanceOf(a) ?? 0), 0);
+
+  const sortedAccounts = [...accounts].sort((a, b) => {
+    switch (sortBy) {
+      case "points_desc":
+        return (balanceOf(b) ?? 0) - (balanceOf(a) ?? 0);
+      case "points_asc":
+        return (balanceOf(a) ?? 0) - (balanceOf(b) ?? 0);
+      case "status":
+        return statusOf(a).localeCompare(statusOf(b)) ||
+          a.username.localeCompare(b.username);
+      default:
+        return a.username.localeCompare(b.username);
+    }
+  });
 
   return (
     <div className="space-y-6">
@@ -80,7 +112,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
+        <Stat label="Gesamt-Punkte" value={fmtNumber(totalPoints)} accent="text-brand" />
         <Stat label="Accounts" value={accounts.length} />
         <Stat label="Laufend" value={running} accent="text-emerald-400" />
         <Stat label="Gestoppt" value={accounts.length - running} />
@@ -91,8 +124,22 @@ export default function Dashboard() {
         />
       </div>
 
+      <div className="flex items-center justify-end gap-2 text-sm">
+        <span className="text-zinc-400">Sortieren:</span>
+        <select
+          className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-sm"
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+        >
+          <option value="points_desc">Punkte ↓</option>
+          <option value="points_asc">Punkte ↑</option>
+          <option value="name">Name (A–Z)</option>
+          <option value="status">Status</option>
+        </select>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-2">
-        {accounts.map((a) => (
+        {sortedAccounts.map((a) => (
           <AccountCard key={a.id} account={a} status={statusOf(a)} live={livePoints[a.id] ?? []} />
         ))}
         {accounts.length === 0 && (
@@ -111,7 +158,7 @@ function Stat({
   accent,
 }: {
   label: string;
-  value: number;
+  value: number | string;
   accent?: string;
 }) {
   return (

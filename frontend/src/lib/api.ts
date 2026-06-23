@@ -148,6 +148,10 @@ export const api = {
     ),
   accountPoints: (id: number) =>
     req<{ ts: string; balance: number | null }[]>(`/api/accounts/${id}/points`),
+  accountBalances: () =>
+    req<{ account_id: number; username: string; balance: number | null }[]>(
+      "/api/accounts/balances"
+    ),
   accountEvents: (id: number) =>
     req<EventRow[]>(`/api/accounts/${id}/events`),
 

@@ -60,9 +60,9 @@ class HeistManager(threading.Thread):
     # NEXT heist — even from a different user moments later — is joined right
     # away; there is no inter-heist timer. This constant is only a stuck-state
     # safety: if an end message is ever missed (observer reconnect, unknown
-    # failure wording) don't stay "in progress" forever. Far longer than any real
-    # heist (~60-90s), so it never interferes with normal back-to-back heists.
-    SAFETY_CLEAR_SECONDS = 600.0
+    # failure wording) don't stay "in progress" forever. A heist never lasts
+    # longer than ~3 min, so this never interferes with normal back-to-back heists.
+    SAFETY_CLEAR_SECONDS = 180.0
 
     # ------------------------------------------------------------------ lifecycle
     def stop(self):
