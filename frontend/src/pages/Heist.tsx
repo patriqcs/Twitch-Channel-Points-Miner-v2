@@ -3,6 +3,9 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type HeistConfig } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
 
+// Only this account gets a !play button.
+const PLAY_USERNAME = "wirklichNICHTpatriQ";
+
 const NUM_FIELDS: { key: keyof HeistConfig; label: string; hint: string }[] = [
   { key: "start_cooldown", label: "Start-Cooldown (s)", hint: "pro Account zwischen zwei !heist (Bot-Limit, i.d.R. 3600)" },
   { key: "spacing_min", label: "Spacing min (s)", hint: "min. Abstand zwischen zwei Openern" },
@@ -63,6 +66,10 @@ export default function Heist() {
     return Math.max(0, base - (now - dataUpdatedAt) / 1000);
   };
 
+  const playAccount = [...(status?.openers ?? []), ...(status?.joiners ?? [])].find(
+    (a) => a.username.toLowerCase() === PLAY_USERNAME.toLowerCase()
+  );
+
   const playOne = async (id: number, username: string) => {
     setMsg(`⏳ !play mit ${username}…`);
     try {
@@ -80,17 +87,11 @@ export default function Heist() {
         <div className="flex items-center gap-3">
           <Button
             variant="outline"
-            onClick={async () => {
-              if (!confirm("!play mit ALLEN eingeloggten Accounts schreiben?")) return;
-              try {
-                const r = await api.heistPlayAll();
-                setMsg(`✅ !play wird an ${r.scheduled} Account(s) gesendet (gestaffelt)`);
-              } catch (e) {
-                setMsg(`❌ ${(e as Error).message}`);
-              }
-            }}
+            disabled={!playAccount}
+            title={playAccount ? `!play mit ${PLAY_USERNAME}` : `${PLAY_USERNAME} nicht gefunden`}
+            onClick={() => playAccount && playOne(playAccount.id, playAccount.username)}
           >
-            !play (alle)
+            !play ({PLAY_USERNAME})
           </Button>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={cfg.enabled} onChange={(e) => set("enabled", e.target.checked)} />
@@ -135,8 +136,6 @@ export default function Heist() {
                       setMsg(r.ok ? `✅ ${o.username}: gesendet` : `❌ ${o.username}: fehlgeschlagen`);
                     } catch (e) { setMsg(`❌ ${(e as Error).message}`); }
                   }}>Test</Button>
-                  <Button size="sm" variant="ghost" title="!play mit diesem Account"
-                    onClick={() => playOne(o.id, o.username)}>!play</Button>
                 </div>
               </div>
             )) : <div className="text-zinc-600">keine</div>}
@@ -144,11 +143,7 @@ export default function Heist() {
           <div>
             <div className="text-zinc-500">Joiner (!join)</div>
             {status?.joiners.length ? status.joiners.map((j) => (
-              <div key={j.id} className="flex items-center justify-between gap-2">
-                <span>{j.username}{!j.logged_in && <span className="text-amber-400"> (kein Login)</span>}</span>
-                <Button size="sm" variant="ghost" title="!play mit diesem Account"
-                  onClick={() => playOne(j.id, j.username)}>!play</Button>
-              </div>
+              <div key={j.id}>{j.username}{!j.logged_in && <span className="text-amber-400"> (kein Login)</span>}</div>
             )) : <div className="text-zinc-600">keine</div>}
           </div>
         </div>
