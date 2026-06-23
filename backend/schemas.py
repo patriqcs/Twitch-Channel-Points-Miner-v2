@@ -104,12 +104,16 @@ class AccountCreate(BaseModel):
     password: Optional[str] = None
     proxy_id: Optional[int] = None
     enabled: bool = True
+    heist_opener: bool = False
+    heist_joiner: bool = False
 
 
 class AccountUpdate(BaseModel):
     password: Optional[str] = None
     proxy_id: Optional[int] = None
     enabled: Optional[bool] = None
+    heist_opener: Optional[bool] = None
+    heist_joiner: Optional[bool] = None
 
 
 class AccountRead(BaseModel):
@@ -119,6 +123,8 @@ class AccountRead(BaseModel):
     status: str
     proxy_id: Optional[int] = None
     has_password: bool = False
+    heist_opener: bool = False
+    heist_joiner: bool = False
     created_at: datetime
     last_login_at: Optional[datetime] = None
 

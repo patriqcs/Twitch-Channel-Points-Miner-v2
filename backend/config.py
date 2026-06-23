@@ -108,6 +108,14 @@ WATCH_MIN_COHORT = int(os.environ.get("WATCH_MIN_COHORT", "3"))
 WATCH_MIN_EARN = int(os.environ.get("WATCH_MIN_EARN", "10"))               # peer median pts
 WATCH_STALL_STRIKES = int(os.environ.get("WATCH_STALL_STRIKES", "2"))
 
+# ---- Heist module (chat mini-game coordinator) ----
+# Runs a backend thread that opens heists with "opener" accounts and joins them
+# with "joiner" accounts. The module itself is also gated by the DB setting
+# HEIST_ENABLED (toggled from the UI); this env flag just disables the whole
+# coordinator thread regardless of the DB setting.
+HEIST_COORDINATOR_ENABLED = _bool_env("HEIST_COORDINATOR_ENABLED", True)
+
+
 # ---- Event retention ----
 # points_snapshot events are written every ~60s per account and would grow the
 # DB forever; prune the high-volume ones older than this many days (0 = keep all).

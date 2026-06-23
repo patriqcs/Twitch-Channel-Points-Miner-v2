@@ -36,6 +36,10 @@ class Account(SQLModel, table=True):
     # stopped | running | starting | needs_login | error
     status: str = "stopped"
     proxy_id: Optional[int] = Field(default=None, foreign_key="proxy.id")
+    # Heist module roles: opener accounts fire "!heist" (60-min cooldown each),
+    # joiner accounts (typically only the main) fire "!join" to collect the loot.
+    heist_opener: bool = False
+    heist_joiner: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     last_login_at: Optional[datetime] = None
 

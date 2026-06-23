@@ -34,8 +34,35 @@ def _set_sqlite_pragma(dbapi_conn, _record):
     cur.close()
 
 
+def _ensure_columns() -> None:
+    """Lightweight, idempotent column add-ons (no Alembic in this project).
+
+    create_all() creates missing tables but never alters existing ones, so new
+    columns on an already-created table must be added by hand. SQLite supports
+    ADD COLUMN with a default; we only add what's missing.
+    """
+    from sqlalchemy import text
+
+    wanted = {
+        "account": {
+            "heist_opener": "BOOLEAN NOT NULL DEFAULT 0",
+            "heist_joiner": "BOOLEAN NOT NULL DEFAULT 0",
+        },
+    }
+    with engine.begin() as conn:
+        for table, columns in wanted.items():
+            existing = {
+                row[1]  # name column of PRAGMA table_info
+                for row in conn.execute(text(f"PRAGMA table_info({table})"))
+            }
+            for name, ddl in columns.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
+    _ensure_columns()
 
 
 def get_session():

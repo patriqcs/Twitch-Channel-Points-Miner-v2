@@ -7,8 +7,40 @@ export interface Account {
   status: string;
   proxy_id: number | null;
   has_password: boolean;
+  heist_opener: boolean;
+  heist_joiner: boolean;
   created_at: string;
   last_login_at: string | null;
+}
+
+export interface HeistConfig {
+  enabled: boolean;
+  channel: string;
+  bot: string;
+  trigger_regex: string;
+  end_regex: string;
+  start_command: string;
+  join_command: string;
+  start_cooldown: number;
+  spacing_min: number;
+  spacing_max: number;
+  join_delay_ms: number;
+  active_timeout: number;
+}
+
+export interface HeistStatus {
+  runtime: {
+    online: boolean | null;
+    observer_connected: boolean;
+    observer_account_id: number | null;
+    observer_username: string | null;
+    heist_active: boolean;
+    next_open_in: number;
+    cooldowns: { account_id: number; remaining: number }[];
+  };
+  config: HeistConfig;
+  openers: { id: number; username: string; logged_in: boolean }[];
+  joiners: { id: number; username: string; logged_in: boolean }[];
 }
 
 export interface Proxy {
@@ -175,6 +207,17 @@ export const api = {
     req<{ channel: string; cooldowns: Record<string, number>; master_delays: Record<string, number>; counts: Record<string, number>; all_delay: number }>(
       "/api/redeem/config",
       { method: "PUT", body: JSON.stringify(body) }
+    ),
+
+  // heist (open heists with opener accounts, join them with joiner accounts)
+  getHeistConfig: () => req<HeistConfig>("/api/heist/config"),
+  putHeistConfig: (body: Partial<HeistConfig>) =>
+    req<HeistConfig>("/api/heist/config", { method: "PUT", body: JSON.stringify(body) }),
+  getHeistStatus: () => req<HeistStatus>("/api/heist/status"),
+  heistTest: (id: number, command?: string) =>
+    req<{ ok: boolean; username: string; channel: string; command: string }>(
+      `/api/heist/test/${id}`,
+      { method: "POST", body: JSON.stringify({ command: command ?? null }) }
     ),
 
   // settings

@@ -78,6 +78,35 @@ export default function Accounts() {
               ))}
             </select>
 
+            <div className="flex gap-3 text-xs text-zinc-400">
+              <label className="flex items-center gap-1.5" title="Öffnet Heists mit !heist">
+                <input
+                  type="checkbox"
+                  checked={a.heist_opener}
+                  onChange={async (e) => {
+                    try {
+                      await api.updateAccount(a.id, { heist_opener: e.target.checked });
+                      invalidate();
+                    } catch (er) { setErr((er as Error).message); }
+                  }}
+                />
+                Opener
+              </label>
+              <label className="flex items-center gap-1.5" title="Tritt Heists mit !join bei">
+                <input
+                  type="checkbox"
+                  checked={a.heist_joiner}
+                  onChange={async (e) => {
+                    try {
+                      await api.updateAccount(a.id, { heist_joiner: e.target.checked });
+                      invalidate();
+                    } catch (er) { setErr((er as Error).message); }
+                  }}
+                />
+                Joiner
+              </label>
+            </div>
+
             <div className="flex gap-1.5">
               <Button size="sm" variant="success" title="Start"
                 onClick={async () => { await api.startAccount(a.id); invalidate(); }}>
