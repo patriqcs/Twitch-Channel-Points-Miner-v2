@@ -51,10 +51,18 @@ class HeistManager(threading.Thread):
         # runtime state
         self._online: "bool | None" = None
         self._last_online_check = 0.0
-        self._heist_active = False
+        self._heist_active = False       # gates the opener scheduler only
         self._heist_since = 0.0
+        self._last_join_at = 0.0         # join dedup is time-based, see _handle_open
         self._next_open_at = 0.0
         self._last_event_msg = ""
+
+    # Two announcements within this many seconds are treated as the SAME heist
+    # (the bot posts one announcement per heist; this only guards against a
+    # repeated line). Far below the real gap between heists (~100s+), so every
+    # genuinely new heist is still joined — the join must NOT hang on the
+    # _heist_active flag, which can stay set until the active-timeout.
+    JOIN_DEDUP_WINDOW = 30.0
 
     # ------------------------------------------------------------------ lifecycle
     def stop(self):
@@ -194,12 +202,15 @@ class HeistManager(threading.Thread):
             self._handle_open(cfg, msg)
 
     def _handle_open(self, cfg, msg: str):
+        now = time.monotonic()
         with self._lock:
-            transitioning = not self._heist_active
             self._heist_active = True
-            self._heist_since = time.monotonic()
-        if not transitioning:
-            return  # already joined this heist
+            self._heist_since = now
+            # Dedup on time, NOT on _heist_active: heists can open ~100s apart
+            # while the active flag is still set, and we must join each one.
+            if (now - self._last_join_at) < self.JOIN_DEDUP_WINDOW:
+                return  # repeated announcement of the same heist -> already joined
+            self._last_join_at = now
         logger.info("heist OPEN detected: %s", msg[:140])
         # primary join via the persistent observer (fast path)
         delay = max(0.0, cfg["join_delay_ms"] / 1000.0)
