@@ -8,7 +8,6 @@ const NUM_FIELDS: { key: keyof HeistConfig; label: string; hint: string }[] = [
   { key: "spacing_min", label: "Spacing min (s)", hint: "min. Abstand zwischen zwei Openern" },
   { key: "spacing_max", label: "Spacing max (s)", hint: "max. Abstand zwischen zwei Openern" },
   { key: "join_delay_ms", label: "Join-Delay (ms)", hint: "Wartezeit vor !join nach Bot-Bestätigung" },
-  { key: "active_timeout", label: "Heist-Timeout (s)", hint: "Heist gilt nach so vielen Sek. als beendet (falls keine End-Regex)" },
 ];
 
 export default function Heist() {
@@ -109,11 +108,11 @@ export default function Heist() {
           <Field label="Join-Befehl" hint="tritt einem Heist bei">
             <Input value={cfg.join_command} onChange={(e) => set("join_command", e.target.value)} placeholder="!join" />
           </Field>
-          <Field label="Trigger-Regex" hint="erkennt eine OFFENE Heist in einer Bot-Nachricht">
-            <Input value={cfg.trigger_regex} onChange={(e) => set("trigger_regex", e.target.value)} placeholder="!join" />
+          <Field label="Trigger-Regex" hint="erkennt eine OFFENE Heist; leer = eingebauter Default">
+            <Input value={cfg.trigger_regex} onChange={(e) => set("trigger_regex", e.target.value)} placeholder="Heist on .+spots left" />
           </Field>
-          <Field label="End-Regex (optional)" hint="erkennt das ENDE eines Heists (sonst Timeout)">
-            <Input value={cfg.end_regex} onChange={(e) => set("end_regex", e.target.value)} placeholder="(leer)" />
+          <Field label="End-Regex" hint="erkennt das ENDE eines Heists; leer = eingebauter Default">
+            <Input value={cfg.end_regex} onChange={(e) => set("end_regex", e.target.value)} placeholder="took .+ from the !heist|No loot" />
           </Field>
           {NUM_FIELDS.map((f) => (
             <Field key={f.key} label={f.label} hint={f.hint}>

@@ -30,7 +30,6 @@ class HeistConfig(BaseModel):
     spacing_min: float | None = None
     spacing_max: float | None = None
     join_delay_ms: float | None = None
-    active_timeout: float | None = None
 
 
 @router.get("/config")
@@ -71,8 +70,6 @@ def put_config(body: HeistConfig, session: Session = Depends(get_session)):
         _set_num(heist.SPACING_MAX_KEY, body.spacing_max)
     if body.join_delay_ms is not None:
         _set_num(heist.JOIN_DELAY_KEY, body.join_delay_ms)
-    if body.active_timeout is not None:
-        _set_num(heist.ACTIVE_TIMEOUT_KEY, body.active_timeout)
     session.commit()
     return heist.get_config(session)
 

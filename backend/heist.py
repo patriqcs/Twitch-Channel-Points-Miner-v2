@@ -45,23 +45,28 @@ START_COOLDOWN_KEY = "HEIST_START_COOLDOWN"  # per-account seconds between !heis
 SPACING_MIN_KEY = "HEIST_SPACING_MIN"        # min seconds between two openers
 SPACING_MAX_KEY = "HEIST_SPACING_MAX"        # max seconds between two openers
 JOIN_DELAY_KEY = "HEIST_JOIN_DELAY_MS"       # delay before firing !join
-ACTIVE_TIMEOUT_KEY = "HEIST_ACTIVE_TIMEOUT"  # assume a heist resolved after N s
+
+# Built-in chat-message patterns for the j4nkttv heist bot (j4nkb0t), derived
+# from a live chat capture. Used whenever the matching setting is left blank, so
+# detection works out of the box; a non-empty setting still overrides them.
+#   open:        "🚨Heist on <place>! 🚐N spots left | 🎯Loot: N Points | 👉!join"
+#   end success: "<user> took N points from the !heist"
+#   end failure: "💥 Heist on <place> failed! 💸 No loot."
+BUILTIN_TRIGGER_REGEX = r"Heist on .+spots left"
+BUILTIN_END_REGEX = r"took .+ from the !heist|Heist on .+ failed|No loot"
 
 _DEFAULTS = {
     ENABLED_KEY: "0",
     CHANNEL_KEY: "",
     BOT_KEY: "",
-    # The bot's open-heist announcement points people at the join command, so the
-    # join command itself is a robust default trigger ("👉!join").
-    TRIGGER_KEY: r"!join",
-    END_KEY: "",
+    TRIGGER_KEY: BUILTIN_TRIGGER_REGEX,
+    END_KEY: BUILTIN_END_REGEX,
     START_CMD_KEY: "!heist",
     JOIN_CMD_KEY: "!join",
     START_COOLDOWN_KEY: "3600",
     SPACING_MIN_KEY: "300",
     SPACING_MAX_KEY: "600",
     JOIN_DELAY_KEY: "300",
-    ACTIVE_TIMEOUT_KEY: "180",
 }
 
 
@@ -93,15 +98,16 @@ def get_config(session: Session) -> dict:
         "enabled": g(ENABLED_KEY).strip().lower() in ("1", "true", "yes", "on"),
         "channel": (g(CHANNEL_KEY) or "").strip().lower(),
         "bot": (g(BOT_KEY) or "").strip().lower(),
-        "trigger_regex": g(TRIGGER_KEY) or _DEFAULTS[TRIGGER_KEY],
-        "end_regex": g(END_KEY) or "",
+        # Regexes fall back to the built-in patterns when left blank, so heist
+        # detection works without configuration but stays overridable.
+        "trigger_regex": g(TRIGGER_KEY).strip() or BUILTIN_TRIGGER_REGEX,
+        "end_regex": g(END_KEY).strip() or BUILTIN_END_REGEX,
         "start_command": (g(START_CMD_KEY) or _DEFAULTS[START_CMD_KEY]).strip(),
         "join_command": (g(JOIN_CMD_KEY) or _DEFAULTS[JOIN_CMD_KEY]).strip(),
         "start_cooldown": _as_float(g(START_COOLDOWN_KEY), 3600.0),
         "spacing_min": _as_float(g(SPACING_MIN_KEY), 300.0),
         "spacing_max": _as_float(g(SPACING_MAX_KEY), 600.0),
         "join_delay_ms": _as_float(g(JOIN_DELAY_KEY), 300.0),
-        "active_timeout": _as_float(g(ACTIVE_TIMEOUT_KEY), 180.0),
     }
 
 

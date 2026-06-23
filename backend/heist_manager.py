@@ -51,18 +51,18 @@ class HeistManager(threading.Thread):
         # runtime state
         self._online: "bool | None" = None
         self._last_online_check = 0.0
-        self._heist_active = False       # gates the opener scheduler only
+        self._heist_in_progress = False  # set on open announcement, cleared on end
         self._heist_since = 0.0
-        self._last_join_at = 0.0         # join dedup is time-based, see _handle_open
         self._next_open_at = 0.0
         self._last_event_msg = ""
 
-    # Two announcements within this many seconds are treated as the SAME heist
-    # (the bot posts one announcement per heist; this only guards against a
-    # repeated line). Far below the real gap between heists (~100s+), so every
-    # genuinely new heist is still joined — the join must NOT hang on the
-    # _heist_active flag, which can stay set until the active-timeout.
-    JOIN_DEDUP_WINDOW = 30.0
+    # The heist's end message (built-in regex) clears _heist_in_progress, so the
+    # NEXT heist — even from a different user moments later — is joined right
+    # away; there is no inter-heist timer. This constant is only a stuck-state
+    # safety: if an end message is ever missed (observer reconnect, unknown
+    # failure wording) don't stay "in progress" forever. Far longer than any real
+    # heist (~60-90s), so it never interferes with normal back-to-back heists.
+    SAFETY_CLEAR_SECONDS = 600.0
 
     # ------------------------------------------------------------------ lifecycle
     def stop(self):
@@ -101,7 +101,7 @@ class HeistManager(threading.Thread):
         # online is True (or None=unknown -> assume up and let IRC sort it out)
 
         self._ensure_observer(cfg, joiners)
-        self._expire_active_heist(cfg)
+        self._safety_clear()
         self._maybe_open_heist(cfg, openers)
 
     # ------------------------------------------------------------------ config
@@ -142,7 +142,7 @@ class HeistManager(threading.Thread):
     def _set_offline_state(self):
         self._teardown_observer()
         with self._lock:
-            self._heist_active = False
+            self._heist_in_progress = False
 
     # ------------------------------------------------------------------ observer
     def _ensure_observer(self, cfg, joiners):
@@ -193,24 +193,24 @@ class HeistManager(threading.Thread):
             trig, end = self._trigger_re, self._end_re
         if not cfg or nick.lower() != cfg["bot"]:
             return
+        # End is checked BEFORE the open trigger: a resolved heist clears the
+        # in-progress flag immediately, so the next heist is joinable at once.
         if end is not None and end.search(msg):
             with self._lock:
-                self._heist_active = False
-            logger.info("heist resolved (bot end message)")
+                was = self._heist_in_progress
+                self._heist_in_progress = False
+            if was:
+                logger.info("heist resolved (bot end message)")
             return
         if trig is not None and trig.search(msg):
             self._handle_open(cfg, msg)
 
     def _handle_open(self, cfg, msg: str):
-        now = time.monotonic()
         with self._lock:
-            self._heist_active = True
-            self._heist_since = now
-            # Dedup on time, NOT on _heist_active: heists can open ~100s apart
-            # while the active flag is still set, and we must join each one.
-            if (now - self._last_join_at) < self.JOIN_DEDUP_WINDOW:
-                return  # repeated announcement of the same heist -> already joined
-            self._last_join_at = now
+            if self._heist_in_progress:
+                return  # duplicate announcement of the same heist -> already joined
+            self._heist_in_progress = True
+            self._heist_since = time.monotonic()
         logger.info("heist OPEN detected: %s", msg[:140])
         # primary join via the persistent observer (fast path)
         delay = max(0.0, cfg["join_delay_ms"] / 1000.0)
@@ -239,18 +239,20 @@ class HeistManager(threading.Thread):
             self._record_event(rec["id"], f"{cfg['join_command']} gesendet")
 
     # ------------------------------------------------------------------ openers
-    def _expire_active_heist(self, cfg):
+    def _safety_clear(self):
+        # Pure stuck-state recovery (see SAFETY_CLEAR_SECONDS). Normally the end
+        # message clears the flag long before this fires.
         with self._lock:
-            if self._heist_active and self._end_re is None:
-                if (time.monotonic() - self._heist_since) > cfg["active_timeout"]:
-                    self._heist_active = False
-                    logger.debug("heist assumed resolved (active timeout)")
+            if self._heist_in_progress and \
+                    (time.monotonic() - self._heist_since) > self.SAFETY_CLEAR_SECONDS:
+                self._heist_in_progress = False
+                logger.warning("heist state force-cleared (missed end message?)")
 
     def _maybe_open_heist(self, cfg, openers):
         if not openers:
             return
         with self._lock:
-            if self._heist_active:
+            if self._heist_in_progress:
                 return
             now = time.monotonic()
             if now < self._next_open_at:
@@ -301,7 +303,7 @@ class HeistManager(threading.Thread):
                 ),
                 "observer_account_id": self._observer_account_id,
                 "observer_username": self._observer_username or None,
-                "heist_active": self._heist_active,
+                "heist_active": self._heist_in_progress,
                 "next_open_in": round(next_in, 1),
                 "cooldowns": heist.active_cooldowns(),
             }

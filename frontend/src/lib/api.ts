@@ -25,7 +25,6 @@ export interface HeistConfig {
   spacing_min: number;
   spacing_max: number;
   join_delay_ms: number;
-  active_timeout: number;
 }
 
 export interface HeistStatus {
