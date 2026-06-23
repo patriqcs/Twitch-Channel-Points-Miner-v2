@@ -16,11 +16,18 @@ export default function Heist() {
   const [saving, setSaving] = useState(false);
 
   const { data: loaded } = useQuery({ queryKey: ["heist-config"], queryFn: api.getHeistConfig });
-  const { data: status } = useQuery({
+  const { data: status, dataUpdatedAt } = useQuery({
     queryKey: ["heist-status"],
     queryFn: api.getHeistStatus,
     refetchInterval: 4000,
   });
+
+  // 1s ticker so the per-account cooldown counts down smoothly between refetches
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     if (loaded && !cfg) setCfg(loaded);
@@ -46,6 +53,14 @@ export default function Heist() {
 
   const rt = status?.runtime;
   const onlineLabel = rt?.online === true ? "🟢 online" : rt?.online === false ? "⚪ offline" : "❓ unbekannt";
+
+  // live per-account cooldown: server snapshot minus seconds elapsed since fetch
+  const cdMap = new Map<number, number>((rt?.cooldowns ?? []).map((c) => [c.account_id, c.remaining]));
+  const cooldownFor = (id: number) => {
+    const base = cdMap.get(id);
+    if (base == null) return 0;
+    return Math.max(0, base - (now - dataUpdatedAt) / 1000);
+  };
 
   return (
     <div className="space-y-5">
@@ -76,11 +91,14 @@ export default function Heist() {
             {status?.openers.length ? status.openers.map((o) => (
               <div key={o.id} className="flex items-center justify-between gap-2">
                 <span>{o.username}{!o.logged_in && <span className="text-amber-400"> (kein Login)</span>}</span>
-                <Button size="sm" variant="ghost" onClick={async () => {
-                  setMsg(`⏳ Teste !heist mit ${o.username}…`);
-                  try { const r = await api.heistTest(o.id); setMsg(r.ok ? `✅ ${o.username}: gesendet` : `❌ ${o.username}: fehlgeschlagen`); }
-                  catch (e) { setMsg(`❌ ${(e as Error).message}`); }
-                }}>Test</Button>
+                <div className="flex items-center gap-2">
+                  <span className="tabular-nums text-xs text-zinc-400">{fmtCooldown(cooldownFor(o.id))}</span>
+                  <Button size="sm" variant="ghost" onClick={async () => {
+                    setMsg(`⏳ Teste !heist mit ${o.username}…`);
+                    try { const r = await api.heistTest(o.id); setMsg(r.ok ? `✅ ${o.username}: gesendet` : `❌ ${o.username}: fehlgeschlagen`); }
+                    catch (e) { setMsg(`❌ ${(e as Error).message}`); }
+                  }}>Test</Button>
+                </div>
               </div>
             )) : <div className="text-zinc-600">keine</div>}
           </div>
@@ -99,8 +117,8 @@ export default function Heist() {
           <Field label="Streamer-Channel" hint="z.B. j4nkttv">
             <Input value={cfg.channel} onChange={(e) => set("channel", e.target.value)} placeholder="j4nkttv" />
           </Field>
-          <Field label="Bot-Name" hint="z.B. j4nkbot">
-            <Input value={cfg.bot} onChange={(e) => set("bot", e.target.value)} placeholder="j4nkbot" />
+          <Field label="Bot-Name" hint="exakt wie im Chat, z.B. j4nkb0t (mit Null!)">
+            <Input value={cfg.bot} onChange={(e) => set("bot", e.target.value)} placeholder="j4nkb0t" />
           </Field>
           <Field label="Start-Befehl" hint="öffnet einen Heist">
             <Input value={cfg.start_command} onChange={(e) => set("start_command", e.target.value)} placeholder="!heist" />
@@ -134,6 +152,13 @@ export default function Heist() {
       )}
     </div>
   );
+}
+
+function fmtCooldown(sec: number): string {
+  if (sec <= 0) return "✅ frei";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `⏳ ${m}:${String(s).padStart(2, "0")}`;
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
