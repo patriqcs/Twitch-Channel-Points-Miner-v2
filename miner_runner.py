@@ -304,7 +304,11 @@ def main():
         priority=[Priority.STREAK, Priority.DROPS, Priority.ORDER],
         enable_analytics=False,
         logger_settings=LoggerSettings(
-            save=True,
+            # The MinerManager already redirects this process's stdout to
+            # LOGS_DIR/<username>.log, so the library's own file logging is a
+            # redundant SECOND open handle on the same file (plus daily-rotated
+            # backups). Disable it to avoid doubling open file handles / log files.
+            save=False,
             console_level=logging.INFO,
             console_username=True,
             file_level=logging.INFO,
