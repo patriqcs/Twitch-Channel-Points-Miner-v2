@@ -71,6 +71,7 @@ class HeistManager(threading.Thread):
 
     def run(self):
         logger.info("Heist manager started.")
+        heist.load_cooldowns()  # restore per-account cooldowns across restarts
         while not self._stop.wait(self.poll_interval):
             try:
                 self._tick()

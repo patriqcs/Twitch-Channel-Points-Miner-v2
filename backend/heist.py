@@ -111,30 +111,83 @@ def get_config(session: Session) -> dict:
     }
 
 
-# ---- per-account start cooldown (in-memory, resets on restart) ----
-_cooldowns: dict = {}        # account_id -> monotonic time when !heist is allowed again
+# ---- per-account start cooldown (persisted across restarts) ----
+# The bot enforces a ~60-min cooldown per account between !heist starts. We must
+# remember it across a container restart, otherwise every opener looks free again
+# and we'd burn rejected !heist attempts. So we store the WALL-CLOCK expiry
+# (time.time(), not monotonic) per account as JSON in an AppSetting, and reload it
+# on startup. Wall-clock survives the process restart; monotonic would not.
+COOLDOWNS_KEY = "HEIST_COOLDOWNS"   # JSON {account_id: expires_epoch}
+
+_cooldowns: dict = {}        # account_id -> wall-clock epoch when !heist is allowed again
 _cd_lock = threading.Lock()
+
+
+def _persist_cooldowns() -> None:
+    now = time.time()
+    with _cd_lock:
+        data = {str(aid): exp for aid, exp in _cooldowns.items() if exp > now}
+    from backend.db import engine
+    try:
+        with Session(engine) as s:
+            set_setting(s, COOLDOWNS_KEY, json.dumps(data))
+            s.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("could not persist heist cooldowns")
+
+
+def load_cooldowns() -> None:
+    """Restore persisted cooldowns on startup (drops already-expired entries)."""
+    from backend.db import engine
+    try:
+        with Session(engine) as s:
+            raw = _get_setting(s, COOLDOWNS_KEY)
+    except Exception:  # noqa: BLE001
+        logger.exception("could not load heist cooldowns")
+        return
+    try:
+        data = json.loads(raw) if raw else {}
+    except ValueError:
+        data = {}
+    now = time.time()
+    restored = {}
+    for aid, exp in data.items():
+        try:
+            exp = float(exp)
+            aid = int(aid)
+        except (TypeError, ValueError):
+            continue
+        if exp > now:
+            restored[aid] = exp
+    with _cd_lock:
+        _cooldowns.clear()
+        _cooldowns.update(restored)
+    if restored:
+        logger.info("heist: restored %d per-account cooldown(s) after restart",
+                    len(restored))
 
 
 def set_cooldown(account_id: int, seconds: float) -> None:
     if seconds <= 0:
         return
     with _cd_lock:
-        _cooldowns[account_id] = time.monotonic() + seconds
+        _cooldowns[account_id] = time.time() + seconds
+    _persist_cooldowns()
 
 
 def available_at(account_id: int) -> float:
+    """Wall-clock epoch when this account may !heist again (0 = now)."""
     with _cd_lock:
         return _cooldowns.get(account_id, 0.0)
 
 
 def cooldown_remaining(account_id: int) -> float:
-    return max(0.0, available_at(account_id) - time.monotonic())
+    return max(0.0, available_at(account_id) - time.time())
 
 
 def active_cooldowns() -> list:
     """Snapshot of currently-active per-account cooldowns (remaining > 0s)."""
-    now = time.monotonic()
+    now = time.time()
     with _cd_lock:
         items = list(_cooldowns.items())
     return [
