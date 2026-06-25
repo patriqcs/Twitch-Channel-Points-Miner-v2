@@ -15,6 +15,7 @@ export default function Accounts() {
   const [showAdd, setShowAdd] = useState(false);
   const [newUser, setNewUser] = useState("");
   const [newProxy, setNewProxy] = useState<string>("");
+  const [newNoProxy, setNewNoProxy] = useState(false);
   const [login, setLogin] = useState<{ account: Account; data: LoginStart } | null>(null);
   const [token, setToken] = useState<{ username: string; value: string | null; error: string | null } | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -23,12 +24,14 @@ export default function Accounts() {
     mutationFn: () =>
       api.createAccount({
         username: newUser.trim(),
-        proxy_id: newProxy ? Number(newProxy) : null,
+        proxy_id: newNoProxy ? null : newProxy ? Number(newProxy) : null,
+        no_proxy: newNoProxy,
       }),
     onSuccess: () => {
       setShowAdd(false);
       setNewUser("");
       setNewProxy("");
+      setNewNoProxy(false);
       invalidate();
     },
     onError: (e: Error) => setErr(e.message),
@@ -56,8 +59,10 @@ export default function Accounts() {
             <StatusBadge status={a.status} />
 
             <select
-              className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-sm"
+              className="h-9 rounded-md border border-zinc-700 bg-zinc-950 px-2 text-sm disabled:opacity-40"
               value={a.proxy_id ?? ""}
+              disabled={a.no_proxy}
+              title={a.no_proxy ? "Direktverbindung aktiv — kein Proxy" : undefined}
               onChange={async (e) => {
                 try {
                   await api.updateAccount(a.id, {
@@ -79,6 +84,23 @@ export default function Accounts() {
             </select>
 
             <div className="flex gap-3 text-xs text-zinc-400">
+              <label
+                className="flex items-center gap-1.5"
+                title="Direktverbindung erzwingen: weder du noch das Programm weisen je einen Proxy zu"
+              >
+                <input
+                  type="checkbox"
+                  checked={a.no_proxy}
+                  onChange={async (e) => {
+                    try {
+                      await api.updateAccount(a.id, { no_proxy: e.target.checked });
+                      qc.invalidateQueries({ queryKey: ["accounts"] });
+                      qc.invalidateQueries({ queryKey: ["proxies"] });
+                    } catch (er) { setErr((er as Error).message); }
+                  }}
+                />
+                Kein Proxy
+              </label>
               <label className="flex items-center gap-1.5" title="Öffnet Heists mit !heist">
                 <input
                   type="checkbox"
@@ -169,8 +191,9 @@ export default function Accounts() {
         <div className="space-y-3">
           <Input placeholder="Twitch-Username" value={newUser} onChange={(e) => setNewUser(e.target.value)} />
           <select
-            className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 text-sm"
+            className="h-9 w-full rounded-md border border-zinc-700 bg-zinc-950 px-2 text-sm disabled:opacity-40"
             value={newProxy}
+            disabled={newNoProxy}
             onChange={(e) => setNewProxy(e.target.value)}
           >
             <option value="">— kein Proxy —</option>
@@ -178,6 +201,17 @@ export default function Accounts() {
               <option key={p.id} value={p.id}>{p.name} ({p.account_count}/5)</option>
             ))}
           </select>
+          <label
+            className="flex items-center gap-2 text-sm text-zinc-300"
+            title="Direktverbindung erzwingen: weder du noch das Programm weisen je einen Proxy zu"
+          >
+            <input
+              type="checkbox"
+              checked={newNoProxy}
+              onChange={(e) => setNewNoProxy(e.target.checked)}
+            />
+            Kein Proxy (Direktverbindung erzwingen)
+          </label>
           <Button className="w-full" disabled={!newUser.trim() || create.isPending}
             onClick={() => create.mutate()}>
             Anlegen

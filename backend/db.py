@@ -47,6 +47,7 @@ def _ensure_columns() -> None:
         "account": {
             "heist_opener": "BOOLEAN NOT NULL DEFAULT 0",
             "heist_joiner": "BOOLEAN NOT NULL DEFAULT 0",
+            "no_proxy": "BOOLEAN NOT NULL DEFAULT 0",
         },
     }
     with engine.begin() as conn:

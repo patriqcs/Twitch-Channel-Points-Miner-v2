@@ -41,7 +41,7 @@ def get_config(username: str, session: Session = Depends(get_session)):
     ]
 
     proxy = None
-    if acc.proxy_id is not None:
+    if not acc.no_proxy and acc.proxy_id is not None:
         proxy = proxy_url(session.get(Proxy, acc.proxy_id))
 
     return {"username": username, "streamers": streamers, "proxy": proxy}

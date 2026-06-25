@@ -7,6 +7,7 @@ export interface Account {
   status: string;
   proxy_id: number | null;
   has_password: boolean;
+  no_proxy: boolean;
   heist_opener: boolean;
   heist_joiner: boolean;
   created_at: string;

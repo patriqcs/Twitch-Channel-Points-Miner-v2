@@ -105,15 +105,15 @@ class ProxyHealthMonitor:
             for p in session.exec(select(Proxy)).all():
                 proxies[p.id] = {"ep": to_engine_proxy(p),
                                  "label": f"{p.scheme}://{p.host}:{p.port}"}
-            accts = [(a.id, a.username, a.proxy_id)
+            accts = [(a.id, a.username, a.proxy_id, a.no_proxy)
                      for a in session.exec(select(Account)).all()]
             errored = self._recent_proxy_errors(session)
 
-        if not proxies and not any(pid for _, _, pid in accts):
+        if not proxies and not any(pid for _, _, pid, _ in accts):
             return
 
         usage: dict[int, int] = {}
-        for _, _, pid in accts:
+        for _, _, pid, _ in accts:
             if pid is not None:
                 usage[pid] = usage.get(pid, 0) + 1
 
@@ -136,7 +136,11 @@ class ProxyHealthMonitor:
             return None
 
         decisions = []  # (account_id, username, new_proxy_id|keep, change_bool, message)
-        for aid, uname, pid in accts:
+        for aid, uname, pid, no_proxy in accts:
+            if no_proxy:
+                # Hard direct connection: never failover, never auto-attach.
+                self._fails.pop(uname, None)
+                continue
             if not self.manager.is_running(uname):
                 self._fails.pop(uname, None)
                 continue

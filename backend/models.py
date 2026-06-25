@@ -36,6 +36,12 @@ class Account(SQLModel, table=True):
     # stopped | running | starting | needs_login | error
     status: str = "stopped"
     proxy_id: Optional[int] = Field(default=None, foreign_key="proxy.id")
+    # Hard "direct connection" flag: when True this account never uses a proxy —
+    # neither a user-chosen one nor an auto-assigned one. The proxy monitor skips
+    # it entirely (no failover, no auto-attach) and proxy_id is forced to None.
+    # Use for accounts already farmed elsewhere (e.g. patriqcs on the Unraid
+    # Twitch-Channel-Points-Miner-v2) that must keep their own direct IP.
+    no_proxy: bool = False
     # Heist module roles: opener accounts fire "!heist" (60-min cooldown each),
     # joiner accounts (typically only the main) fire "!join" to collect the loot.
     heist_opener: bool = False

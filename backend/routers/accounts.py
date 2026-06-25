@@ -18,6 +18,7 @@ def _to_read(a: Account) -> AccountRead:
     return AccountRead(
         id=a.id, username=a.username, enabled=a.enabled, status=a.status,
         proxy_id=a.proxy_id, has_password=bool(a.password_enc),
+        no_proxy=a.no_proxy,
         heist_opener=a.heist_opener, heist_joiner=a.heist_joiner,
         created_at=a.created_at, last_login_at=a.last_login_at,
     )
@@ -71,10 +72,13 @@ def account_balances(session: Session = Depends(get_session)):
 def create_account(payload: AccountCreate, session: Session = Depends(get_session)):
     if session.exec(select(Account).where(Account.username == payload.username)).first():
         raise HTTPException(409, "username already exists")
-    _check_proxy_capacity(session, payload.proxy_id)
+    # "kein Proxy (fix)" wins over any chosen proxy: a direct account never holds
+    # a proxy_id, so the monitor can never auto-attach one.
+    proxy_id = None if payload.no_proxy else payload.proxy_id
+    _check_proxy_capacity(session, proxy_id)
     acc = Account(
         username=payload.username, password_enc=crypto.encrypt(payload.password),
-        proxy_id=payload.proxy_id, enabled=payload.enabled,
+        proxy_id=proxy_id, enabled=payload.enabled, no_proxy=payload.no_proxy,
         heist_opener=payload.heist_opener, heist_joiner=payload.heist_joiner,
     )
     session.add(acc)
@@ -93,6 +97,12 @@ def update_account(account_id: int, payload: AccountUpdate,
                    session: Session = Depends(get_session)):
     acc = _get(session, account_id)
     data = payload.model_dump(exclude_unset=True)
+    # Keep no_proxy and proxy_id mutually exclusive: turning on "kein Proxy (fix)"
+    # clears any proxy; picking a proxy clears the no_proxy flag.
+    if data.get("no_proxy") is True:
+        data["proxy_id"] = None
+    elif data.get("proxy_id") is not None:
+        data["no_proxy"] = False
     if "proxy_id" in data and data["proxy_id"] != acc.proxy_id:
         _check_proxy_capacity(session, data["proxy_id"], exclude_account_id=acc.id)
     if "password" in data:
