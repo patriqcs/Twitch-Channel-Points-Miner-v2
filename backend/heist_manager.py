@@ -313,10 +313,6 @@ class HeistManager(threading.Thread):
         NOT consumed: never set it (and retract it if a fast open already had).
         Apply only a short backoff so we don't re-fire the same opener at once.
         """
-        secs = self.UNCONFIRMED_BACKOFF
-        m = re.search(r"wait\s+(\d+)\s*s", msg, re.IGNORECASE)
-        if m:  # "@<acc> wait 50s" -> respect the bot's own retry-after
-            secs = max(self.UNCONFIRMED_BACKOFF, float(m.group(1)))
         currently_active = "currently active" in msg.lower()
         with self._lock:
             was_confirmed = pending.get("confirmed")
@@ -328,6 +324,23 @@ class HeistManager(threading.Thread):
                 self._heist_since = time.monotonic()
         if was_confirmed:
             heist.clear_cooldown(pending["id"])  # retract the premature credit
+        if currently_active:
+            # "Heist is currently active" only means one is already running -- our
+            # opener was NOT rate-limited, so neither the bot's per-account start
+            # limit nor any backoff applies. Leave the account free so it can open
+            # the NEXT heist immediately once this one ends.
+            heist.clear_cooldown(pending["id"])
+            self._record_event(
+                pending["id"],
+                f"{cfg['start_command']} -> Heist laeuft bereits, kein Cooldown",
+            )
+            logger.info("heist: %s !heist hit an active heist -> no cooldown",
+                        pending["username"])
+            return
+        secs = self.UNCONFIRMED_BACKOFF
+        m = re.search(r"wait\s+(\d+)\s*s", msg, re.IGNORECASE)
+        if m:  # "@<acc> wait 50s" -> respect the bot's own retry-after
+            secs = max(self.UNCONFIRMED_BACKOFF, float(m.group(1)))
         heist.set_cooldown(pending["id"], secs)
         self._record_event(
             pending["id"],
