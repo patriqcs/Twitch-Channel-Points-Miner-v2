@@ -263,7 +263,16 @@ class MinerManager:
         self.start(username)
 
     def _heartbeat_check(self) -> None:
-        """Restart running miners that have gone silent (alive but not mining)."""
+        """Restart miners that are alive but not actually mining.
+
+        Two failure modes are caught:
+          * "hung" — announced "running" but stopped emitting events, and
+          * "startup stall" — alive past GRACE yet never announced "running"
+            (e.g. a proxy outage at boot made the miner conclude the streamer
+            "does not exist", so it loaded zero streamers and spins forever).
+        The reaper only handles *exited* processes, so without this branch a
+        stalled startup sits in "starting" indefinitely with nothing to fix it.
+        """
         now = time.monotonic()
         with self._lock:
             running = [
@@ -275,16 +284,26 @@ class MinerManager:
             return
 
         cutoff = utcnow() - timedelta(seconds=config.MINER_HEARTBEAT_TIMEOUT)
-        stale: list[str] = []
+        to_restart: list[tuple[str, str]] = []
         with Session(engine) as session:
             for username in running:
                 acc = session.exec(
                     select(Account).where(Account.username == username)
                 ).first()
-                # Only accounts that announced "running" are expected to emit a
-                # steady heartbeat. Skip ones still logging in / needing a login
-                # so we never restart-loop an account that can't run yet.
-                if acc is None or acc.status != "running":
+                if acc is None:
+                    continue
+                # Alive past GRACE but still in a manager-owned "coming up"
+                # state (never announced "running") -> startup stalled. GRACE
+                # (well above a healthy login) gates eligibility, so even a
+                # genuinely broken account retries at most once per GRACE rather
+                # than hot-looping. Restricted to starting/restarting so we never
+                # touch a miner-reported terminal state (error/needs_login).
+                if acc.status in ("starting", "restarting"):
+                    to_restart.append((
+                        username,
+                        f"alive >{config.MINER_HEARTBEAT_GRACE}s but never started "
+                        f"mining (startup stalled) -> restart",
+                    ))
                     continue
                 # Any event at all within the window means the miner is alive.
                 recent = session.exec(
@@ -294,10 +313,13 @@ class MinerManager:
                     .limit(1)
                 ).first()
                 if recent is None:
-                    stale.append(username)
+                    to_restart.append((
+                        username,
+                        f"no activity for >{config.MINER_HEARTBEAT_TIMEOUT}s (hung) "
+                        f"-> restart",
+                    ))
 
-        for username in stale:
-            msg = f"no activity for >{config.MINER_HEARTBEAT_TIMEOUT}s (hung) -> restart"
+        for username, msg in to_restart:
             logger.warning("[%s] %s", username, msg)
             _record_event(username, "status", reason="restarting", message=msg)
             threading.Thread(
