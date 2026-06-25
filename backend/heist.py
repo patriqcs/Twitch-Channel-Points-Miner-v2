@@ -39,6 +39,7 @@ CHANNEL_KEY = "HEIST_CHANNEL"               # streamer login the heist runs in
 BOT_KEY = "HEIST_BOT"                       # chat bot whose messages we react to
 TRIGGER_KEY = "HEIST_TRIGGER_REGEX"         # marks an OPEN heist in a bot message
 END_KEY = "HEIST_END_REGEX"                 # marks a RESOLVED heist (optional)
+REJECT_KEY = "HEIST_REJECT_REGEX"           # bot rejected an opener's !heist (optional)
 START_CMD_KEY = "HEIST_START_COMMAND"
 JOIN_CMD_KEY = "HEIST_JOIN_COMMAND"
 START_COOLDOWN_KEY = "HEIST_START_COOLDOWN"  # per-account seconds between !heist
@@ -52,8 +53,16 @@ JOIN_DELAY_KEY = "HEIST_JOIN_DELAY_MS"       # delay before firing !join
 #   open:        "🚨Heist on <place>! 🚐N spots left | 🎯Loot: N Points | 👉!join"
 #   end success: "<user> took N points from the !heist"
 #   end failure: "💥 Heist on <place> failed! 💸 No loot."
+# When an opener fires !heist but the bot WON'T start a new heist, it replies
+# naming that account, e.g. (from a live capture):
+#   "<user> - Heist is currently active"     (a heist is already running)
+#   "@<user> wait 50s"                       (command rate-limit / on cooldown)
+# The reject regex matches the *reason wording only*; the heist_manager pairs it
+# with the pending opener's username so a !heist that was rejected never starts
+# that account's long start-cooldown.
 BUILTIN_TRIGGER_REGEX = r"Heist on .+spots left"
 BUILTIN_END_REGEX = r"took .+ from the !heist|Heist on .+ failed|No loot"
+BUILTIN_REJECT_REGEX = r"Heist is currently active|wait\s+\d+\s*s|on cooldown"
 
 _DEFAULTS = {
     ENABLED_KEY: "0",
@@ -61,6 +70,7 @@ _DEFAULTS = {
     BOT_KEY: "",
     TRIGGER_KEY: BUILTIN_TRIGGER_REGEX,
     END_KEY: BUILTIN_END_REGEX,
+    REJECT_KEY: BUILTIN_REJECT_REGEX,
     START_CMD_KEY: "!heist",
     JOIN_CMD_KEY: "!join",
     START_COOLDOWN_KEY: "3600",
@@ -102,6 +112,7 @@ def get_config(session: Session) -> dict:
         # detection works without configuration but stays overridable.
         "trigger_regex": g(TRIGGER_KEY).strip() or BUILTIN_TRIGGER_REGEX,
         "end_regex": g(END_KEY).strip() or BUILTIN_END_REGEX,
+        "reject_regex": g(REJECT_KEY).strip() or BUILTIN_REJECT_REGEX,
         "start_command": (g(START_CMD_KEY) or _DEFAULTS[START_CMD_KEY]).strip(),
         "join_command": (g(JOIN_CMD_KEY) or _DEFAULTS[JOIN_CMD_KEY]).strip(),
         "start_cooldown": _as_float(g(START_COOLDOWN_KEY), 3600.0),
@@ -173,6 +184,14 @@ def set_cooldown(account_id: int, seconds: float) -> None:
     with _cd_lock:
         _cooldowns[account_id] = time.time() + seconds
     _persist_cooldowns()
+
+
+def clear_cooldown(account_id: int) -> None:
+    """Drop an account's start cooldown (e.g. a !heist that turned out rejected)."""
+    with _cd_lock:
+        existed = _cooldowns.pop(account_id, None) is not None
+    if existed:
+        _persist_cooldowns()
 
 
 def available_at(account_id: int) -> float:

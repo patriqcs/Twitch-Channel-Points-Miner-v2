@@ -40,6 +40,7 @@ class HeistManager(threading.Thread):
         self._cfg: dict | None = None
         self._trigger_re: "re.Pattern | None" = None
         self._end_re: "re.Pattern | None" = None
+        self._reject_re: "re.Pattern | None" = None
 
         # observer / joiner state
         self._observer: "heist.HeistIRC | None" = None
@@ -56,6 +57,15 @@ class HeistManager(threading.Thread):
         self._next_open_at = 0.0
         self._last_event_msg = ""
 
+        # Confirmation tracking for the opener we last fired !heist with. The
+        # bot's open announcement carries no starter name, so we credit an
+        # opener (and only then start its long start-cooldown) when a FRESH open
+        # appears within OPEN_CONFIRM_WINDOW of our fire, or DROP the attempt
+        # (short backoff, no start-cooldown) when the bot rejects it by name or
+        # nothing is confirmed within PENDING_TTL. {id, username, fired_at,
+        # confirmed, confirmed_at} or None.
+        self._pending: "dict | None" = None
+
     # The heist's end message (built-in regex) clears _heist_in_progress, so the
     # NEXT heist — even from a different user moments later — is joined right
     # away; there is no inter-heist timer. This constant is only a stuck-state
@@ -63,6 +73,20 @@ class HeistManager(threading.Thread):
     # failure wording) don't stay "in progress" forever. A heist never lasts
     # longer than ~3 min, so this never interferes with normal back-to-back heists.
     SAFETY_CLEAR_SECONDS = 180.0
+
+    # A fresh open announcement this many seconds after our !heist counts as
+    # "our opener started it" (live captures show the open lands within ~1-2s).
+    OPEN_CONFIRM_WINDOW = 8.0
+    # How long to keep a fired !heist "pending" while waiting for the open
+    # announcement or a by-name rejection. The bot batches rejections up to
+    # ~13s late, so this is comfortably above that. A heist itself lasts ~60s,
+    # so the pending always resolves before the heist ends.
+    PENDING_TTL = 25.0
+    # Backoff applied to an opener whose !heist did NOT start a heist (rejected
+    # or unconfirmed). NOT the long start-cooldown — the bot's per-account start
+    # limit was never consumed, so the account stays usable; this only spaces
+    # out retries so we don't hammer the same opener.
+    UNCONFIRMED_BACKOFF = 90.0
 
     # ------------------------------------------------------------------ lifecycle
     def stop(self):
@@ -103,6 +127,7 @@ class HeistManager(threading.Thread):
 
         self._ensure_observer(cfg, joiners)
         self._safety_clear()
+        self._pending_check()
         self._maybe_open_heist(cfg, openers)
 
     # ------------------------------------------------------------------ config
@@ -121,6 +146,12 @@ class HeistManager(threading.Thread):
             except re.error as e:
                 logger.warning("invalid HEIST_END_REGEX (%s); ignoring", e)
                 self._end_re = None
+            try:
+                self._reject_re = re.compile(cfg["reject_regex"], re.IGNORECASE) \
+                    if cfg.get("reject_regex") else None
+            except re.error as e:
+                logger.warning("invalid HEIST_REJECT_REGEX (%s); ignoring", e)
+                self._reject_re = None
 
     # ------------------------------------------------------------------ online
     def _check_online(self, cfg, joiners, openers):
@@ -144,6 +175,7 @@ class HeistManager(threading.Thread):
         self._teardown_observer()
         with self._lock:
             self._heist_in_progress = False
+            self._pending = None
 
     # ------------------------------------------------------------------ observer
     def _ensure_observer(self, cfg, joiners):
@@ -187,15 +219,30 @@ class HeistManager(threading.Thread):
             t.join(timeout=5)
 
     # ------------------------------------------------------------------ bot messages
+    @staticmethod
+    def _names_account(text: str, username: str) -> bool:
+        """True if a bot message refers to `username` as a whole word (so
+        'patriq' never matches inside 'patriq1'). Usernames are [a-z0-9_]."""
+        return re.search(r"(?<![0-9a-z_])" + re.escape(username.lower())
+                         + r"(?![0-9a-z_])", text.lower()) is not None
+
     def _on_bot_message(self, nick: str, msg: str):
         """Runs in the observer's IRC thread for every public chat message."""
         with self._lock:
             cfg = self._cfg
-            trig, end = self._trigger_re, self._end_re
+            trig, end, rej = self._trigger_re, self._end_re, self._reject_re
+            pending = self._pending
         if not cfg or nick.lower() != cfg["bot"]:
             return
-        # End is checked BEFORE the open trigger: a resolved heist clears the
-        # in-progress flag immediately, so the next heist is joinable at once.
+        # 1) A by-name rejection of the opener we just fired (e.g. "<acc> - Heist
+        #    is currently active" / "@<acc> wait 50s"). Checked first so a !heist
+        #    that the bot refused never starts that account's long cooldown.
+        if pending is not None and rej is not None \
+                and self._names_account(msg, pending["username"]) and rej.search(msg):
+            self._on_open_rejected(cfg, pending, msg)
+            return
+        # 2) End is checked BEFORE the open trigger: a resolved heist clears the
+        #    in-progress flag immediately, so the next heist is joinable at once.
         if end is not None and end.search(msg):
             with self._lock:
                 was = self._heist_in_progress
@@ -207,11 +254,30 @@ class HeistManager(threading.Thread):
             self._handle_open(cfg, msg)
 
     def _handle_open(self, cfg, msg: str):
+        confirm = None
         with self._lock:
             if self._heist_in_progress:
                 return  # duplicate announcement of the same heist -> already joined
             self._heist_in_progress = True
             self._heist_since = time.monotonic()
+            # A fresh open right after our !heist == our opener started it. Only
+            # one heist runs at a time, so this attribution is safe; a late
+            # by-name rejection (handled in _on_bot_message) can still retract it.
+            pending = self._pending
+            if pending is not None and not pending["confirmed"] \
+                    and (time.monotonic() - pending["fired_at"]) <= self.OPEN_CONFIRM_WINDOW:
+                pending["confirmed"] = True
+                pending["confirmed_at"] = time.monotonic()
+                confirm = dict(pending)
+        if confirm is not None:
+            heist.set_cooldown(confirm["id"], cfg["start_cooldown"])
+            self._record_event(
+                confirm["id"],
+                f"{cfg['start_command']} bestätigt gestartet -> Start-Cooldown "
+                f"{int(cfg['start_cooldown'])}s",
+            )
+            logger.info("heist: open confirmed for %s -> start-cooldown set",
+                        confirm["username"])
         logger.info("heist OPEN detected: %s", msg[:140])
         # primary join via the persistent observer (fast path)
         delay = max(0.0, cfg["join_delay_ms"] / 1000.0)
@@ -239,6 +305,63 @@ class HeistManager(threading.Thread):
         if ok:
             self._record_event(rec["id"], f"{cfg['join_command']} gesendet")
 
+    # ------------------------------------------------------------------ confirmation
+    def _on_open_rejected(self, cfg, pending, msg: str):
+        """The bot refused our pending opener's !heist (named it explicitly).
+
+        No heist started for us, so the bot's long per-account start-cooldown was
+        NOT consumed: never set it (and retract it if a fast open already had).
+        Apply only a short backoff so we don't re-fire the same opener at once.
+        """
+        secs = self.UNCONFIRMED_BACKOFF
+        m = re.search(r"wait\s+(\d+)\s*s", msg, re.IGNORECASE)
+        if m:  # "@<acc> wait 50s" -> respect the bot's own retry-after
+            secs = max(self.UNCONFIRMED_BACKOFF, float(m.group(1)))
+        currently_active = "currently active" in msg.lower()
+        with self._lock:
+            was_confirmed = pending.get("confirmed")
+            self._pending = None
+            if currently_active:
+                # A heist really is running (we just never saw its open) -> block
+                # opening until its end message arrives.
+                self._heist_in_progress = True
+                self._heist_since = time.monotonic()
+        if was_confirmed:
+            heist.clear_cooldown(pending["id"])  # retract the premature credit
+        heist.set_cooldown(pending["id"], secs)
+        self._record_event(
+            pending["id"],
+            f"{cfg['start_command']} abgelehnt ({msg[:70]}) -> kein Start-Cooldown, "
+            f"Backoff {int(secs)}s",
+        )
+        logger.info("heist: %s !heist rejected (%s) -> %ds backoff, no start-cooldown",
+                    pending["username"], msg[:60], int(secs))
+
+    def _pending_check(self):
+        """Resolve a fired !heist that neither got an open nor a by-name reject
+        within PENDING_TTL: treat as 'did not start' (short backoff, no long
+        start-cooldown). Also expires a confirmed pending once it has aged out."""
+        with self._lock:
+            pending = self._pending
+            if pending is None:
+                return
+            if (time.monotonic() - pending["fired_at"]) <= self.PENDING_TTL:
+                return
+            self._pending = None
+            confirmed = pending.get("confirmed")
+            cmd = (self._cfg or {}).get("start_command", "!heist")
+        if confirmed:
+            return  # already credited with the start-cooldown; just aged out
+        heist.set_cooldown(pending["id"], self.UNCONFIRMED_BACKOFF)
+        self._record_event(
+            pending["id"],
+            f"{cmd} nicht bestätigt -> kein Start-Cooldown, "
+            f"Backoff {int(self.UNCONFIRMED_BACKOFF)}s",
+        )
+        logger.info("heist: %s open unconfirmed within %.0fs -> %ds backoff, "
+                    "no start-cooldown", pending["username"], self.PENDING_TTL,
+                    int(self.UNCONFIRMED_BACKOFF))
+
     # ------------------------------------------------------------------ openers
     def _safety_clear(self):
         # Pure stuck-state recovery (see SAFETY_CLEAR_SECONDS). Normally the end
@@ -254,6 +377,10 @@ class HeistManager(threading.Thread):
             return
         with self._lock:
             if self._heist_in_progress:
+                return
+            # Don't fire a second opener while the last one is still awaiting its
+            # open/reject verdict (avoids two unattributable !heist in flight).
+            if self._pending is not None:
                 return
             now = time.monotonic()
             if now < self._next_open_at:
@@ -272,12 +399,27 @@ class HeistManager(threading.Thread):
                          name=f"heist-open-{rec['username']}").start()
 
     def _open_with(self, rec, cfg):
-        logger.info("heist: opening with %s (!heist)", rec["username"])
+        logger.info("heist: opening with %s (%s)", rec["username"], cfg["start_command"])
+        # Mark this opener pending BEFORE sending, so the observer thread can
+        # match the bot's open/reject (which can arrive within a second) against
+        # it. The long start-cooldown is set only once the open is confirmed
+        # (_handle_open); a rejection or timeout drops it with a short backoff.
+        with self._lock:
+            self._pending = {
+                "id": rec["id"],
+                "username": rec["username"].lower(),
+                "fired_at": time.monotonic(),
+                "confirmed": False,
+            }
         ok = heist.fire_heist(rec, cfg["channel"], cfg["start_command"])
         if ok:
-            heist.set_cooldown(rec["id"], cfg["start_cooldown"])
-            self._record_event(rec["id"], f"{cfg['start_command']} gesendet")
+            self._record_event(
+                rec["id"], f"{cfg['start_command']} gesendet (warte auf Bestätigung)")
         else:
+            # Never left our socket -> nothing to confirm; free the opener again.
+            with self._lock:
+                if self._pending is not None and self._pending["id"] == rec["id"]:
+                    self._pending = None
             logger.warning("heist: opener %s failed to send %s",
                            rec["username"], cfg["start_command"])
 
@@ -296,6 +438,15 @@ class HeistManager(threading.Thread):
     def status(self) -> dict:
         with self._lock:
             next_in = max(0.0, self._next_open_at - time.monotonic())
+            pending = self._pending
+            pending_info = None
+            if pending is not None:
+                pending_info = {
+                    "account_id": pending["id"],
+                    "username": pending["username"],
+                    "confirmed": pending.get("confirmed", False),
+                    "age": round(time.monotonic() - pending["fired_at"], 1),
+                }
             return {
                 "online": self._online,
                 "observer_connected": (
@@ -305,6 +456,7 @@ class HeistManager(threading.Thread):
                 "observer_account_id": self._observer_account_id,
                 "observer_username": self._observer_username or None,
                 "heist_active": self._heist_in_progress,
+                "pending_open": pending_info,
                 "next_open_in": round(next_in, 1),
                 "cooldowns": heist.active_cooldowns(),
             }

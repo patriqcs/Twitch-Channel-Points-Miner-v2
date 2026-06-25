@@ -19,6 +19,7 @@ export interface HeistConfig {
   bot: string;
   trigger_regex: string;
   end_regex: string;
+  reject_regex: string;
   start_command: string;
   join_command: string;
   start_cooldown: number;
@@ -34,6 +35,12 @@ export interface HeistStatus {
     observer_account_id: number | null;
     observer_username: string | null;
     heist_active: boolean;
+    pending_open: {
+      account_id: number;
+      username: string;
+      confirmed: boolean;
+      age: number;
+    } | null;
     next_open_in: number;
     cooldowns: { account_id: number; remaining: number }[];
   };

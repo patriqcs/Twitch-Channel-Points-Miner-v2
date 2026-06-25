@@ -108,6 +108,15 @@ export default function Heist() {
         <div><div className="text-zinc-500">Heist aktiv</div><div>{rt?.heist_active ? "🚨 ja" : "nein"}</div></div>
         <div><div className="text-zinc-500">Nächster Opener in</div>
           <div>{rt ? `${Math.round(rt.next_open_in)}s` : "—"}</div></div>
+        {rt?.pending_open && (
+          <div className="col-span-2 sm:col-span-4">
+            <div className="text-zinc-500">!heist gesendet – warte auf Bestätigung</div>
+            <div>
+              {rt.pending_open.confirmed ? "✅ bestätigt" : "⏳ offen"} ·{" "}
+              {rt.pending_open.username} · {Math.round(rt.pending_open.age)}s
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Roles overview */}
@@ -169,6 +178,9 @@ export default function Heist() {
           </Field>
           <Field label="End-Regex" hint="erkennt das ENDE eines Heists; leer = eingebauter Default">
             <Input value={cfg.end_regex} onChange={(e) => set("end_regex", e.target.value)} placeholder="took .+ from the !heist|No loot" />
+          </Field>
+          <Field label="Ablehnungs-Regex" hint="erkennt, dass der Bot unseren !heist abgelehnt hat (kein Cooldown); leer = Default">
+            <Input value={cfg.reject_regex} onChange={(e) => set("reject_regex", e.target.value)} placeholder="Heist is currently active|wait \d+s" />
           </Field>
           {NUM_FIELDS.map((f) => (
             <Field key={f.key} label={f.label} hint={f.hint}>

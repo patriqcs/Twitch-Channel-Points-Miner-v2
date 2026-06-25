@@ -24,6 +24,7 @@ class HeistConfig(BaseModel):
     bot: str | None = None
     trigger_regex: str | None = None
     end_regex: str | None = None
+    reject_regex: str | None = None
     start_command: str | None = None
     join_command: str | None = None
     start_cooldown: float | None = None
@@ -58,6 +59,8 @@ def put_config(body: HeistConfig, session: Session = Depends(get_session)):
         _set_str(heist.TRIGGER_KEY, body.trigger_regex)
     if body.end_regex is not None:
         _set_str(heist.END_KEY, body.end_regex)
+    if body.reject_regex is not None:
+        _set_str(heist.REJECT_KEY, body.reject_regex)
     if body.start_command is not None:
         _set_str(heist.START_CMD_KEY, body.start_command.strip())
     if body.join_command is not None:
