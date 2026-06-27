@@ -55,6 +55,22 @@ export default function Heist() {
     }
   };
 
+  // The on/off switch must take effect immediately (and persist) rather than
+  // wait for the "Speichern" button, so the module actually stops when unchecked.
+  const toggleEnabled = async (enabled: boolean) => {
+    const prev = cfg;
+    setCfg({ ...cfg, enabled }); // optimistic
+    try {
+      const saved = await api.putHeistConfig({ enabled });
+      setCfg(saved);
+      qc.invalidateQueries({ queryKey: ["heist-status"] });
+      setMsg(enabled ? "✅ Modul aktiviert" : "🛑 Modul deaktiviert");
+    } catch (e) {
+      setCfg(prev); // revert on failure
+      setMsg(`❌ ${(e as Error).message}`);
+    }
+  };
+
   const rt = status?.runtime;
   const onlineLabel = rt?.online === true ? "🟢 online" : rt?.online === false ? "⚪ offline" : "❓ unbekannt";
 
@@ -94,7 +110,7 @@ export default function Heist() {
             !play ({PLAY_USERNAME})
           </Button>
           <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={cfg.enabled} onChange={(e) => set("enabled", e.target.checked)} />
+            <input type="checkbox" checked={cfg.enabled} onChange={(e) => toggleEnabled(e.target.checked)} />
             Modul aktiviert
           </label>
         </div>
