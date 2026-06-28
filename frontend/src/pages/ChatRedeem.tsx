@@ -147,6 +147,31 @@ export default function ChatRedeem() {
   const setCmd = (i: number, patch: Partial<ChatRedeemCommand>) =>
     setCommands((cs) => cs.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
 
+  const [testing, setTesting] = useState(false);
+  const testConnection = async () => {
+    setTesting(true);
+    setMsg("⏳ Teste Chat-Verbindung des Ansage-Accounts über seinen Proxy…");
+    try {
+      const r = await api.testChatRedeem();
+      const via = r.via_proxy ? "über Proxy" : "direkt (ohne Proxy)";
+      if (r.joined && r.sent) {
+        setMsg(`✅ ${r.announcer} ist ${via} verbunden UND hat in #${r.channel} geschrieben — funktioniert!`);
+      } else if (r.joined) {
+        setMsg(`⚠️ ${r.announcer} ist ${via} verbunden, aber Schreiben fehlgeschlagen${r.send_error ? `: ${r.send_error}` : ""}.`);
+      } else if (r.notice_error) {
+        setMsg(`❌ Twitch lehnt den Login ab: „${r.notice_error}". Token ungültig/abgelaufen, Account hier neu einloggen — oder die (Proxy-)IP ist bei Twitch-Chat gesperrt.`);
+      } else if (r.connect_error) {
+        setMsg(`❌ Verbindung ${via} fehlgeschlagen: ${r.connect_error}. Proxy erreichbar? IRC (Port 6667) erlaubt?`);
+      } else {
+        setMsg(`❌ Timeout — keine Verbindung ${via} zustande gekommen. Proxy blockt evtl. IRC, oder Twitch-Chat sperrt die IP. Teste denselben Account einmal ohne Proxy.`);
+      }
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`);
+    } finally {
+      setTesting(false);
+    }
+  };
+
   const toggleRedeemer = async (id: number, next: boolean) => {
     try {
       await api.updateAccount(id, { chat_redeemer: next });
@@ -236,6 +261,15 @@ export default function ChatRedeem() {
             ))}
           </select>
         </Field>
+        <div className="sm:col-span-2">
+          <Button size="sm" variant="outline" disabled={testing || !announcer || !channel.trim()}
+            onClick={testConnection}>
+            {testing ? <Loader2 className="animate-spin" size={14} /> : null} Chat-Verbindung testen
+          </Button>
+          <span className="ml-2 text-[11px] text-zinc-500">
+            meldet den Ansage-Account über seinen Proxy an und postet eine kurze Test-Zeile in #{channel.trim() || "channel"}
+          </span>
+        </div>
       </Card>
 
       {/* Editable announcement messages */}

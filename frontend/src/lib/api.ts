@@ -286,6 +286,12 @@ export const api = {
     req<{ channelId: string; displayName: string; balance: number; rewards: Reward[] }>(
       `/api/chat-redeem/rewards?channel=${encodeURIComponent(channel)}`
     ),
+  testChatRedeem: (message?: string) =>
+    req<{
+      via_proxy: boolean; joined: boolean; sent: boolean;
+      connect_error: string | null; notice_error: string | null;
+      send_error: string | null; channel: string; announcer: string;
+    }>("/api/chat-redeem/test", { method: "POST", body: JSON.stringify({ message: message ?? null }) }),
 
   // settings
   getStreamers: () => req<{ streamers: string[]; raw: string }>("/api/settings/streamers"),

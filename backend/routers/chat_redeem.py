@@ -87,6 +87,36 @@ def get_status(session: Session = Depends(get_session)):
     }
 
 
+class ChatTest(BaseModel):
+    message: str | None = None
+
+
+@router.post("/test")
+def test_connection(body: ChatTest, session: Session = Depends(get_session)):
+    """Connect as the announcer through its proxy and post a test line in chat.
+
+    Synchronous (waits ~up to 17s) — a manual button, not the live loop. Returns
+    a precise diagnostic so the user can see whether the proxied login + write
+    works, or exactly why it doesn't.
+    """
+    cfg = chat_redeem.get_config(session)
+    if not cfg["channel"]:
+        raise HTTPException(400, "kein Channel konfiguriert")
+    if not cfg["announcer"]:
+        raise HTTPException(400, "kein Ansage-Account gewählt")
+    rec = chat_redeem.announcer_creds(session, cfg["announcer"])
+    if rec is None:
+        raise HTTPException(400, f"Ansage-Account „{cfg['announcer']}\" nicht gefunden")
+    if not rec["logged_in"]:
+        raise HTTPException(400, f"Ansage-Account „{rec['username']}\" hat in dieser "
+                                 "App keinen Login-Cookie")
+    message = (body.message or "🔌 Chat-Verbindungstest").strip() or None
+    result = chat_redeem.probe_announcer(cfg["channel"], rec, message)
+    result["channel"] = cfg["channel"]
+    result["announcer"] = rec["username"]
+    return result
+
+
 @router.get("/rewards")
 def rewards(channel: str, session: Session = Depends(get_session)):
     """The channel's custom rewards, fetched via any usable account.

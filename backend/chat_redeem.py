@@ -169,3 +169,41 @@ def announcer_creds(session: Session, announcer: str) -> "dict | None":
     if a is None:
         return None
     return _creds(session, a)
+
+
+def probe_announcer(channel: str, rec: dict, message: "str | None" = None,
+                    timeout: float = 15.0) -> dict:
+    """Connect as the announcer THROUGH ITS PROXY and (optionally) write to chat.
+
+    A one-shot diagnostic for "can this account log in + post via its proxy?":
+    opens a short-lived IRC link exactly like the live module would, waits for
+    the channel JOIN, optionally sends ``message``, then reports precisely what
+    happened (joined? posted? connect error? Twitch login rejection?).
+    """
+    import threading
+    import time
+
+    from backend import heist  # local import keeps module import order simple
+
+    client = heist.HeistIRC(rec["username"], rec["token"], channel, rec["proxy"])
+    t = threading.Thread(target=client.start, name="chat-redeem-probe", daemon=True)
+    t.start()
+    joined = client.joined.wait(timeout=timeout)
+    sent, send_error = False, None
+    if joined and message:
+        try:
+            client.send(message)
+            sent = True
+            time.sleep(2.0)  # let the reactor flush the privmsg before we close
+        except Exception as e:  # noqa: BLE001
+            send_error = str(e)
+    client.die()
+    t.join(timeout=5)
+    return {
+        "via_proxy": rec["proxy"] is not None,
+        "joined": joined,
+        "sent": sent,
+        "connect_error": client.connect_error,
+        "notice_error": client.notice_error,
+        "send_error": send_error,
+    }
