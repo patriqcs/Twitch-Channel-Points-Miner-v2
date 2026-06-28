@@ -106,6 +106,20 @@ def cooldown_remaining(account_id: int, reward_id: str) -> float:
     return max(0.0, until - time.monotonic())
 
 
+def set_global_cooldown(reward_id: str, seconds: float) -> None:
+    """Global spacing: no account may fire `reward_id` again for `seconds`."""
+    if seconds <= 0:
+        return
+    with _cd_lock:
+        _global_free[reward_id] = time.monotonic() + seconds
+
+
+def global_cooldown_remaining(reward_id: str) -> float:
+    with _cd_lock:
+        until = _global_free.get(reward_id, 0.0)
+    return max(0.0, until - time.monotonic())
+
+
 def _available_at(account_id: int, reward_id: str) -> float:
     with _cd_lock:
         return _cooldowns.get((account_id, reward_id), 0.0)

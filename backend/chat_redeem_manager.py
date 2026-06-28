@@ -179,6 +179,9 @@ class ChatRedeemManager(threading.Thread):
             obs = self._observer
             if obs is not None and obs.joined.is_set():
                 self._announce(self._off_text())
+                # let the observer's IRC reactor flush the privmsg before we
+                # disconnect — otherwise the OFF message is dropped unsent
+                time.sleep(2.0)
                 logger.info("chat-redeem OFF announced")
         self._active = False
         self._teardown_observer()
@@ -233,8 +236,19 @@ class ChatRedeemManager(threading.Thread):
                 self._last_balance_refresh = 0.0   # pull a fresh catalogue soon
             return
 
+        # Honor the cooldowns configured for this reward on the "Einlösen" page:
+        # a per-account cooldown (so a used account drops out and the next free
+        # one is taken) AND a global spacing between any two fires of the reward.
         with Session(engine) as session:
             redeemers = chat_redeem.load_redeemer_accounts(session)
+            per_account_cd = redeem.cooldown_seconds(session, reward_id)
+            global_delay = redeem.master_delay(session, reward_id)
+
+        grem = redeem.global_cooldown_remaining(reward_id)
+        if grem > 0:
+            self._note_trigger(entry, nick, ok=False,
+                               message=f"globaler Cooldown {grem:.0f}s")
+            return
 
         cost = reward.get("cost", 0)
         eligible = []
@@ -242,7 +256,7 @@ class ChatRedeemManager(threading.Thread):
             if not r["logged_in"]:
                 continue
             if redeem.cooldown_remaining(r["id"], reward_id) > 0:
-                continue  # just used / server-cooled -> let another account go
+                continue  # on cooldown -> let another (next-richest free) account go
             with self._lock:
                 bal = self._balances.get(r["id"])
             if bal is None or bal < cost:
@@ -260,7 +274,12 @@ class ChatRedeemManager(threading.Thread):
         proxies = acc["proxy"].requests_proxies if acc["proxy"] else None
         res = redeem.redeem_reward(acc["token"], proxies, channel_id, reward)
         if res["ok"]:
-            redeem.set_account_cooldown(acc["id"], reward_id, chat_redeem.ROTATE_COOLDOWN)
+            # configured per-account cooldown (min the small rotate fallback so a
+            # burst never re-picks the same account in the same instant), plus the
+            # configured global spacing
+            redeem.set_account_cooldown(acc["id"], reward_id,
+                                        max(per_account_cd, chat_redeem.ROTATE_COOLDOWN))
+            redeem.set_global_cooldown(reward_id, global_delay)
             with self._lock:
                 self._balances[acc["id"]] = max(0, bal - cost)
             self._record_event(
