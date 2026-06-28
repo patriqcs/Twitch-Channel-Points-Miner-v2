@@ -332,6 +332,11 @@ class HeistIRC(SingleServerIRCBot):
     # ---- irc.bot event handlers ----
     def on_welcome(self, connection, event):
         connection.join(self.channel)
+        # Twitch SUPPRESSES the JOIN echo in large channels, so on_join may never
+        # fire even though we are registered and in the channel. Mark ourselves
+        # ready on the welcome (001) once JOIN has been sent — Twitch processes
+        # the queued JOIN before any PRIVMSG we send, so writing/reading works.
+        self.joined.set()
 
     def on_join(self, connection, event):
         self.joined.set()
