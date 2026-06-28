@@ -28,11 +28,14 @@ export interface ChatRedeemConfig {
   channel: string;
   announcer: string;
   commands: ChatRedeemCommand[];
+  on_text: string;
+  off_text: string;
 }
 
 export interface ChatRedeemStatus {
   runtime: {
     active: boolean;
+    reason: string;
     observer_connected: boolean;
     announcer: string | null;
     channel: string | null;
@@ -276,7 +279,7 @@ export const api = {
 
   // chat-redeem (viewers trigger reward redemptions by typing chat commands)
   getChatRedeemConfig: () => req<ChatRedeemConfig>("/api/chat-redeem/config"),
-  putChatRedeemConfig: (body: Partial<Pick<ChatRedeemConfig, "enabled" | "channel" | "announcer" | "commands">>) =>
+  putChatRedeemConfig: (body: Partial<Pick<ChatRedeemConfig, "enabled" | "channel" | "announcer" | "commands" | "on_text" | "off_text">>) =>
     req<ChatRedeemConfig>("/api/chat-redeem/config", { method: "PUT", body: JSON.stringify(body) }),
   getChatRedeemStatus: () => req<ChatRedeemStatus>("/api/chat-redeem/status"),
   getChatRedeemRewards: (channel: string) =>

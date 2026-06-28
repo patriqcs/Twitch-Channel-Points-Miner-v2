@@ -1,8 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, MessageSquare, Plus, Trash2 } from "lucide-react";
+import { Loader2, MessageSquare, Play, Plus, Square, Trash2 } from "lucide-react";
 import { api, type ChatRedeemCommand, type Reward } from "@/lib/api";
-import { Button, Card, Input } from "@/components/ui";
+import { Button, Card, Input, Textarea } from "@/components/ui";
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -35,9 +35,12 @@ export default function ChatRedeem() {
   const [announcer, setAnnouncer] = useState("");
   const [enabled, setEnabled] = useState(false);
   const [commands, setCommands] = useState<ChatRedeemCommand[]>([]);
+  const [onText, setOnText] = useState("");
+  const [offText, setOffText] = useState("");
   const [rewards, setRewards] = useState<Reward[]>([]);
   const [loadingRewards, setLoadingRewards] = useState(false);
   const [savingCmds, setSavingCmds] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
@@ -48,8 +51,15 @@ export default function ChatRedeem() {
       setAnnouncer(loaded.announcer);
       setEnabled(loaded.enabled);
       setCommands(loaded.commands.length ? loaded.commands : [blankCmd()]);
+      setOnText(loaded.on_text);
+      setOffText(loaded.off_text);
       setInitialized(true);
     }
+  }, [loaded, initialized]);
+
+  // keep the local enabled flag in sync with the server (e.g. after a toggle)
+  useEffect(() => {
+    if (loaded && initialized) setEnabled(loaded.enabled);
   }, [loaded, initialized]);
 
   const loadRewards = async () => {
@@ -83,19 +93,26 @@ export default function ChatRedeem() {
   };
 
   const toggleEnabled = async (next: boolean) => {
+    setToggling(true);
     setEnabled(next); // optimistic
     try {
-      // persist the current commands/channel/announcer alongside, so enabling
-      // immediately announces with the right command list
+      // persist the whole current config alongside, so enabling immediately
+      // announces with the right command list and edited message text
       await api.putChatRedeemConfig({
         enabled: next, channel: channel.trim().toLowerCase(),
         announcer: announcer.trim().toLowerCase(), commands: cleanCommands(),
+        on_text: onText, off_text: offText,
       });
+      await qc.invalidateQueries({ queryKey: ["chat-redeem-config"] });
       qc.invalidateQueries({ queryKey: ["chat-redeem-status"] });
-      setMsg(next ? "✅ Aktiviert – Ansage wird im Chat gepostet" : "🛑 Deaktiviert – Aus-Ansage wird gepostet");
+      setMsg(next
+        ? "✅ Gestartet – die An-Nachricht wird im Chat gepostet (siehe Status)."
+        : "🛑 Gestoppt – die Aus-Nachricht wird im Chat gepostet.");
     } catch (e) {
       setEnabled(!next); // revert
       setMsg(`❌ ${(e as Error).message}`);
+    } finally {
+      setToggling(false);
     }
   };
 
@@ -134,6 +151,10 @@ export default function ChatRedeem() {
   const rt = status?.runtime;
   const balById = new Map<number, number | null>((status?.redeemers ?? []).map((r) => [r.id, r.balance]));
   const sortedRewards = [...rewards].sort(byReward);
+  const activeCmdList = commands
+    .filter((c) => c.enabled && c.command.trim() && c.command.trim() !== "!")
+    .map((c) => c.command.trim())
+    .join(" ");
 
   return (
     <div className="space-y-5">
@@ -141,10 +162,17 @@ export default function ChatRedeem() {
         <h1 className="flex items-center gap-2 text-2xl font-bold">
           <MessageSquare size={22} /> Chat-Einlösen
         </h1>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={enabled} onChange={(e) => toggleEnabled(e.target.checked)} />
-          Modul aktiviert
-        </label>
+        <div className="flex items-center gap-2">
+          {enabled ? (
+            <Button variant="danger" disabled={toggling} onClick={() => toggleEnabled(false)}>
+              {toggling ? <Loader2 className="animate-spin" size={15} /> : <Square size={15} />} Stoppen
+            </Button>
+          ) : (
+            <Button disabled={toggling} onClick={() => toggleEnabled(true)}>
+              {toggling ? <Loader2 className="animate-spin" size={15} /> : <Play size={15} />} Starten
+            </Button>
+          )}
+        </div>
       </div>
 
       <p className="text-sm text-zinc-400">
@@ -161,6 +189,10 @@ export default function ChatRedeem() {
           <div>{rt?.observer_connected ? `🟢 ${rt.announcer}` : rt?.announcer ? `⏳ ${rt.announcer}` : "—"}</div></div>
         <div><div className="text-zinc-500">Channel</div><div>{rt?.channel ?? "—"}</div></div>
         <div><div className="text-zinc-500">Letzte Auslösungen</div><div>{rt?.last_triggers.length ?? 0}</div></div>
+        <div className="col-span-2 sm:col-span-4">
+          <div className="text-zinc-500">Grund / Diagnose</div>
+          <div className={rt?.active ? "text-emerald-400" : "text-amber-400"}>{rt?.reason ?? "—"}</div>
+        </div>
         {rt?.last_triggers && rt.last_triggers.length > 0 && (
           <div className="col-span-2 space-y-0.5 sm:col-span-4">
             {rt.last_triggers.slice(0, 5).map((t, i) => (
@@ -190,6 +222,26 @@ export default function ChatRedeem() {
               <option key={a.id} value={a.username.toLowerCase()}>{a.username}</option>
             ))}
           </select>
+        </Field>
+      </Card>
+
+      {/* Editable announcement messages */}
+      <Card className="space-y-3">
+        <div className="text-sm font-semibold">Chat-Nachrichten</div>
+        <Field label="An-Nachricht (beim Starten)"
+          hint="Platzhalter {commands} wird durch die aktiven Commands ersetzt.">
+          <Textarea rows={2} value={onText}
+            onChange={(e) => setOnText(e.target.value)}
+            onBlur={() => saveField({ on_text: onText })} />
+        </Field>
+        <div className="rounded-md border border-zinc-800 bg-zinc-950 p-2 text-xs text-zinc-300">
+          <span className="text-zinc-500">Vorschau: </span>
+          {onText.replace("{commands}", activeCmdList || "(keine)")}
+        </div>
+        <Field label="Aus-Nachricht (beim Stoppen)">
+          <Textarea rows={2} value={offText}
+            onChange={(e) => setOffText(e.target.value)}
+            onBlur={() => saveField({ off_text: offText })} />
         </Field>
       </Card>
 

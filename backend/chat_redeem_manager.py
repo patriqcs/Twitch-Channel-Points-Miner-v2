@@ -60,6 +60,7 @@ class ChatRedeemManager(threading.Thread):
         self._last_balance_refresh = 0.0
         self._refreshing = False
         self._last_triggers: list = []     # recent fires (for the status UI)
+        self._reason = "aus"               # human-readable current state (for the UI)
 
     # ------------------------------------------------------------------ lifecycle
     def stop(self):
@@ -83,9 +84,22 @@ class ChatRedeemManager(threading.Thread):
             self._cfg = cfg
             self._commands = {c["command"]: c for c in cfg["commands"]}
 
-        want = bool(cfg["enabled"] and cfg["channel"] and cfg["announcer"]
-                    and cfg["commands"])
-        if not want:
+        if not cfg["enabled"]:
+            self._set_reason("aus")
+            if self._active or self._observer is not None:
+                self._deactivate(announce=True)
+            return
+
+        # enabled but not fully configured -> report exactly what's missing
+        missing = []
+        if not cfg["channel"]:
+            missing.append("Channel")
+        if not cfg["announcer"]:
+            missing.append("Ansage-Account")
+        if not cfg["commands"]:
+            missing.append("mind. 1 Command mit Belohnung")
+        if missing:
+            self._set_reason("Es fehlt: " + ", ".join(missing))
             if self._active or self._observer is not None:
                 self._deactivate(announce=True)
             return
@@ -93,15 +107,25 @@ class ChatRedeemManager(threading.Thread):
         # (re)connect the announcer if missing/dead or its identity changed
         self._ensure_observer(cfg)
         obs = self._observer
-        connected = obs is not None and obs.joined.is_set()
-        if connected and not self._active:
+        if obs is None:
+            self._set_reason(f"Ansage-Account „{cfg['announcer']}\" ist in dieser "
+                             "App nicht eingeloggt")
+            return
+        if not obs.joined.is_set():
+            self._set_reason("verbinde mit dem Chat…")
+            return
+        if not self._active:
             self._announce(self._on_text(cfg))
             self._active = True
             self._last_balance_refresh = 0.0   # force an immediate first refresh
             logger.info("chat-redeem ON announced in #%s as %s",
                         cfg["channel"], cfg["announcer"])
-        if self._active:
-            self._maybe_refresh_balances(cfg)
+        self._set_reason("aktiv")
+        self._maybe_refresh_balances(cfg)
+
+    def _set_reason(self, reason: str):
+        with self._lock:
+            self._reason = reason
 
     # ------------------------------------------------------------------ observer
     def _ensure_observer(self, cfg):
@@ -169,13 +193,12 @@ class ChatRedeemManager(threading.Thread):
             logger.exception("chat-redeem announce failed")
 
     def _on_text(self, cfg) -> str:
-        cmds = [c["command"] for c in cfg["commands"] if c["enabled"]]
-        lst = " ".join(cmds) if cmds else "(keine)"
-        return ("🎁 Chat-Redeems sind AN! Schreib einen dieser Commands, "
-                f"um eine Belohnung auszulösen: {lst}")
+        return chat_redeem.render_on_text(cfg.get("on_text", ""), cfg.get("commands", []))
 
     def _off_text(self) -> str:
-        return "🛑 Chat-Redeems sind jetzt AUS."
+        with self._lock:
+            cfg = self._cfg or {}
+        return cfg.get("off_text") or chat_redeem.DEFAULT_OFF_TEXT
 
     # ------------------------------------------------------------------ chat in
     def _on_chat_message(self, nick: str, msg: str):
@@ -327,6 +350,7 @@ class ChatRedeemManager(threading.Thread):
             ]
             return {
                 "active": self._active,
+                "reason": self._reason,
                 "observer_connected": obs is not None and obs.joined.is_set(),
                 "announcer": self._observer_username or None,
                 "channel": self._observer_channel or None,

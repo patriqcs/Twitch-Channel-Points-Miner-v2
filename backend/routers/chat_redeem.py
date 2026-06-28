@@ -34,6 +34,8 @@ class ChatRedeemConfig(BaseModel):
     channel: str | None = None
     announcer: str | None = None
     commands: list[CommandIn] | None = None
+    on_text: str | None = None
+    off_text: str | None = None
 
 
 @router.get("/config")
@@ -55,6 +57,10 @@ def put_config(body: ChatRedeemConfig, session: Session = Depends(get_session)):
     if body.commands is not None:
         clean = chat_redeem.normalize_commands([c.model_dump() for c in body.commands])
         chat_redeem.set_setting(session, chat_redeem.COMMANDS_KEY, json.dumps(clean))
+    if body.on_text is not None:
+        chat_redeem.set_setting(session, chat_redeem.ON_TEXT_KEY, body.on_text.strip())
+    if body.off_text is not None:
+        chat_redeem.set_setting(session, chat_redeem.OFF_TEXT_KEY, body.off_text.strip())
     session.commit()
     return chat_redeem.get_config(session)
 

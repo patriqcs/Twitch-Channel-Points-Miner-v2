@@ -27,8 +27,16 @@ ENABLED_KEY = "CHATREDEEM_ENABLED"      # "0"/"1": module on/off (announces on t
 CHANNEL_KEY = "CHATREDEEM_CHANNEL"      # streamer login: chat to read + channel to redeem in
 ANNOUNCER_KEY = "CHATREDEEM_ANNOUNCER"  # account username that reads chat + posts on/off
 COMMANDS_KEY = "CHATREDEEM_COMMANDS"    # JSON list of command->reward mappings
+ON_TEXT_KEY = "CHATREDEEM_ON_TEXT"      # chat message posted when the module is switched ON
+OFF_TEXT_KEY = "CHATREDEEM_OFF_TEXT"    # chat message posted when the module is switched OFF
 
-_DEFAULTS = {ENABLED_KEY: "0", CHANNEL_KEY: "", ANNOUNCER_KEY: "", COMMANDS_KEY: "[]"}
+# {commands} in the ON text is replaced with the space-joined active commands.
+DEFAULT_ON_TEXT = ("🎁 Chat-Redeems sind AN! Schreib einen dieser Commands, "
+                   "um eine Belohnung auszulösen: {commands}")
+DEFAULT_OFF_TEXT = "🛑 Chat-Redeems sind jetzt AUS."
+
+_DEFAULTS = {ENABLED_KEY: "0", CHANNEL_KEY: "", ANNOUNCER_KEY: "", COMMANDS_KEY: "[]",
+             ON_TEXT_KEY: DEFAULT_ON_TEXT, OFF_TEXT_KEY: DEFAULT_OFF_TEXT}
 
 # Default per-command cooldown (seconds) when a mapping doesn't specify one. Keeps
 # a single command from firing on every chat line (anti-spam / points protection).
@@ -98,7 +106,17 @@ def get_config(session: Session) -> dict:
         "channel": (_get_setting(session, CHANNEL_KEY) or "").strip().lower(),
         "announcer": (_get_setting(session, ANNOUNCER_KEY) or "").strip().lower(),
         "commands": cmds,
+        "on_text": _get_setting(session, ON_TEXT_KEY) or DEFAULT_ON_TEXT,
+        "off_text": _get_setting(session, OFF_TEXT_KEY) or DEFAULT_OFF_TEXT,
     }
+
+
+def render_on_text(template: str, commands: list) -> str:
+    """Fill the ON-message template's {commands} placeholder with active commands."""
+    cmds = [c["command"] for c in commands if c.get("enabled")]
+    lst = " ".join(cmds) if cmds else "(keine)"
+    tpl = template or DEFAULT_ON_TEXT
+    return tpl.replace("{commands}", lst)
 
 
 # ---- account credentials (token from cookie + engine proxy) ----
