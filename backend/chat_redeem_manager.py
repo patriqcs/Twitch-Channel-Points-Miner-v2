@@ -61,6 +61,7 @@ class ChatRedeemManager(threading.Thread):
         self._refreshing = False
         self._last_triggers: list = []     # recent fires (for the status UI)
         self._reason = "aus"               # human-readable current state (for the UI)
+        self._connect_error: "str | None" = None  # last IRC connect failure (diag)
 
     # ------------------------------------------------------------------ lifecycle
     def stop(self):
@@ -110,9 +111,21 @@ class ChatRedeemManager(threading.Thread):
             self._set_reason(err)
             return
         obs = self._observer
-        if obs is None or not obs.joined.is_set():
-            self._set_reason("verbinde mit dem Chat…")
+        # Twitch rejected the login (bad/expired oauth) -> actionable hint
+        if obs is not None and obs.notice_error:
+            self._set_reason(f"Chat lehnt den Login von „{cfg['announcer']}\" ab: "
+                             f"{obs.notice_error} — Token ungültig/abgelaufen, "
+                             "Account hier neu einloggen")
             return
+        if obs is None or not obs.joined.is_set():
+            if self._connect_error:
+                self._set_reason(f"Chat-Verbindung fehlgeschlagen ({self._connect_error}) "
+                                 "— Proxy des Ansage-Accounts erlaubt evtl. kein IRC "
+                                 "(Port 6667); anderen Proxy/Account ohne Proxy nutzen")
+            else:
+                self._set_reason("verbinde mit dem Chat…")
+            return
+        self._connect_error = None  # joined successfully -> clear stale failure
         if not self._active:
             self._announce(self._on_text(cfg))
             self._active = True
@@ -136,7 +149,13 @@ class ChatRedeemManager(threading.Thread):
         if alive and same:
             return None
         # identity changed or connection down -> rebuild (no off-announce: this is
-        # a reconnect, not a disable; ON re-announces once the new link joins)
+        # a reconnect, not a disable; ON re-announces once the new link joins).
+        # Capture why a dead link failed so the UI can show it (kept until a
+        # later attempt actually joins).
+        if self._observer is not None:
+            self._connect_error = (self._observer.connect_error
+                                   or self._observer.notice_error
+                                   or self._connect_error)
         self._teardown_observer()
         with Session(engine) as session:
             rec = chat_redeem.announcer_creds(session, cfg["announcer"])

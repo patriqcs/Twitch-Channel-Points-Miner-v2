@@ -265,10 +265,20 @@ def stream_online(channel: str, token: str, proxies) -> "bool | None":
 def _socks_connect_factory(engine_proxy):
     """Build an irc connect_factory that routes the TCP socket through a proxy.
 
-    Without a proxy we return the library's default Factory (direct connect).
+    Without a proxy we still wrap the direct connect with a timeout, so an
+    unreachable route (e.g. a tunnel killswitch) fails fast instead of hanging
+    the "connecting…" state on the OS-default multi-minute TCP timeout.
     """
     if engine_proxy is None:
-        return Factory()
+        import socket
+
+        def direct_factory(server_address):
+            host, port = server_address
+            sock = socket.create_connection((host, int(port)), timeout=20)
+            sock.settimeout(None)
+            return sock
+
+        return direct_factory
 
     import socks  # from PySocks (requests[socks]); also covers python-socks install
 
@@ -311,6 +321,9 @@ class HeistIRC(SingleServerIRCBot):
         self._on_message = on_message
         self.joined = threading.Event()
         self._active = False
+        # surfaced to callers for diagnostics when a connection never joins
+        self.connect_error: "str | None" = None
+        self.notice_error: "str | None" = None
         super().__init__(
             [(IRC_SERVER, IRC_PORT, f"oauth:{token}")], username, username,
             connect_factory=_socks_connect_factory(engine_proxy),
@@ -322,6 +335,21 @@ class HeistIRC(SingleServerIRCBot):
 
     def on_join(self, connection, event):
         self.joined.set()
+
+    def _capture_notice(self, event):
+        """Twitch rejects a bad/expired oauth with a NOTICE (e.g. 'Login
+        authentication failed'); record it so the UI can explain the failure."""
+        text = event.arguments[0] if event.arguments else ""
+        if text and ("authentication failed" in text.lower()
+                     or "improperly formatted" in text.lower()
+                     or "login unsuccessful" in text.lower()):
+            self.notice_error = text
+
+    def on_notice(self, connection, event):
+        self._capture_notice(event)
+
+    def on_pubnotice(self, connection, event):
+        self._capture_notice(event)
 
     def on_pubmsg(self, connection, event):
         if self._on_message is None:
@@ -347,6 +375,7 @@ class HeistIRC(SingleServerIRCBot):
             self._connect()
         except Exception as e:  # noqa: BLE001
             logger.warning("heist IRC connect failed (%s): %s", self.channel, e)
+            self.connect_error = str(e) or e.__class__.__name__
             self._active = False
             return
         while self._active:
