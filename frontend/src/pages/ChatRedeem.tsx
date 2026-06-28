@@ -147,6 +147,27 @@ export default function ChatRedeem() {
   const setCmd = (i: number, patch: Partial<ChatRedeemCommand>) =>
     setCommands((cs) => cs.map((c, idx) => (idx === i ? { ...c, ...patch } : c)));
 
+  const [announcing, setAnnouncing] = useState(false);
+  const reannounce = async () => {
+    setAnnouncing(true);
+    try {
+      // persist current edits first, so the re-announcement uses the latest
+      // commands + message text
+      await api.putChatRedeemConfig({
+        channel: channel.trim().toLowerCase(),
+        announcer: announcer.trim().toLowerCase(),
+        commands: cleanCommands(), on_text: onText, off_text: offText,
+      });
+      await qc.invalidateQueries({ queryKey: ["chat-redeem-config"] });
+      const r = await api.announceChatRedeem();
+      setMsg(`✅ An-Nachricht erneut gesendet: ${r.text ?? ""}`);
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`);
+    } finally {
+      setAnnouncing(false);
+    }
+  };
+
   const [testing, setTesting] = useState(false);
   const testConnection = async () => {
     setTesting(true);
@@ -286,6 +307,16 @@ export default function ChatRedeem() {
         <div className="rounded-md border border-zinc-800 bg-zinc-950 p-2 text-xs text-zinc-300">
           <span className="text-zinc-500">Vorschau: </span>
           {onText.replace(/\{commands\}/g, activeCmdList || "(keine)")}
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" disabled={announcing || !enabled}
+            title={!enabled ? "Modul muss laufen (Starten)" : "An-Nachricht jetzt erneut posten"}
+            onClick={reannounce}>
+            {announcing ? <Loader2 className="animate-spin" size={14} /> : null} Ansage jetzt senden
+          </Button>
+          <span className="text-[11px] text-zinc-500">
+            postet die An-Nachricht sofort erneut — mit den aktuell gespeicherten Commands
+          </span>
         </div>
         <Field label="Aus-Nachricht (beim Stoppen)">
           <Textarea rows={2} value={offText}

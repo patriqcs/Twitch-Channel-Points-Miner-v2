@@ -282,6 +282,8 @@ export const api = {
   putChatRedeemConfig: (body: Partial<Pick<ChatRedeemConfig, "enabled" | "channel" | "announcer" | "commands" | "on_text" | "off_text">>) =>
     req<ChatRedeemConfig>("/api/chat-redeem/config", { method: "PUT", body: JSON.stringify(body) }),
   getChatRedeemStatus: () => req<ChatRedeemStatus>("/api/chat-redeem/status"),
+  announceChatRedeem: () =>
+    req<{ ok: boolean; text?: string }>("/api/chat-redeem/announce", { method: "POST" }),
   getChatRedeemRewards: (channel: string) =>
     req<{ channelId: string; displayName: string; balance: number; rewards: Reward[] }>(
       `/api/chat-redeem/rewards?channel=${encodeURIComponent(channel)}`

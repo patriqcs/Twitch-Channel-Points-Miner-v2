@@ -37,6 +37,10 @@ class ChatRedeemManager(threading.Thread):
     # the same command in the same instant spawns one worker); the FULL per-
     # command cooldown is applied only after an actual redemption.
     BURST_DEDUPE = 2.0
+    # When a command can't fire yet (global spacing or all accounts on cooldown)
+    # it is QUEUED and fired as soon as it's free — but never waits longer than
+    # this (a runaway-cooldown backstop).
+    MAX_QUEUE_WAIT = 300.0
 
     def __init__(self, poll_interval: float = 3.0, balance_refresh: float = 45.0):
         super().__init__(name="chat-redeem-manager", daemon=True)
@@ -59,6 +63,7 @@ class ChatRedeemManager(threading.Thread):
 
         # runtime caches
         self._cmd_cd: dict = {}            # command token -> monotonic time free again
+        self._queued: set = set()          # command tokens currently queued (waiting)
         self._balances: dict = {}          # account_id -> cached points balance
         self._spent_at: dict = {}          # account_id -> monotonic of last local spend
         self._reward_cache: dict = {}      # reward_id -> reward dict (from catalogue)
@@ -237,6 +242,22 @@ class ChatRedeemManager(threading.Thread):
         except Exception:  # noqa: BLE001
             logger.exception("chat-redeem announce failed")
 
+    def announce_now(self) -> dict:
+        """Re-send the ON announcement immediately with the CURRENT config.
+
+        Reads the freshly-saved config so any just-changed commands/text are
+        included. Requires the announcer to be connected (module running).
+        """
+        obs = self._observer
+        if obs is None or not obs.joined.is_set():
+            return {"ok": False, "reason": self._reason}
+        with Session(engine) as session:
+            cfg = chat_redeem.get_config(session)
+        text = self._on_text(cfg)
+        self._announce(text)
+        logger.info("chat-redeem ON re-announced on demand")
+        return {"ok": True, "text": text}
+
     def _on_text(self, cfg) -> str:
         return chat_redeem.render_on_text(cfg.get("on_text", ""), cfg.get("commands", []))
 
@@ -263,6 +284,8 @@ class ChatRedeemManager(threading.Thread):
             entry = self._commands.get(token)
             if entry is None or not entry["enabled"]:
                 return
+            if token in self._queued:
+                return  # already queued (waiting for its cooldown) -> coalesce
             now = time.monotonic()
             if now < self._cmd_cd.get(token, 0.0):
                 return  # command on cooldown -> ignore (anti-spam)
@@ -301,53 +324,89 @@ class ChatRedeemManager(threading.Thread):
                                message="Reward erfordert Eingabe – nicht unterstützt")
             return
 
-        # Honor the cooldowns configured for this reward on the "Einlösen" page:
-        # a per-account cooldown (so a used account drops out and the next free
-        # one is taken) AND a global spacing between any two fires of the reward.
-        with Session(engine) as session:
-            redeemers = chat_redeem.load_redeemer_accounts(session)
-            per_account_cd = redeem.cooldown_seconds(session, reward_id)
-            global_delay = redeem.master_delay(session, reward_id)
-
-        grem = redeem.global_cooldown_remaining(reward_id)
-        if grem > 0:
-            self._note_trigger(entry, nick, ok=False,
-                               message=f"globaler Cooldown {grem:.0f}s")
-            return
-
+        token = entry["command"]
         cost = reward.get("cost", 0)
-        eligible = []
-        for r in redeemers:
-            if not r["logged_in"]:
-                continue
-            if redeem.cooldown_remaining(r["id"], reward_id) > 0:
-                continue  # on cooldown -> let another (next-richest free) account go
-            with self._lock:
-                bal = self._balances.get(r["id"])
-            if bal is None or bal < cost:
-                continue
-            eligible.append((bal, r))
+        deadline = time.monotonic() + self.MAX_QUEUE_WAIT
+        queued_here = False
+        announced_queue = False
+        try:
+            while True:
+                # the module may have been stopped while we were queued
+                if not self._active or self._stop.is_set():
+                    return
 
-        if not eligible:
-            self._note_trigger(entry, nick, ok=False,
-                               message="Kein freier Account mit genug Punkten")
-            return
+                # Honor the cooldowns configured on the "Einlösen" page: a per-
+                # account cooldown (used account drops out) AND a global spacing.
+                with Session(engine) as session:
+                    redeemers = chat_redeem.load_redeemer_accounts(session)
+                    per_account_cd = redeem.cooldown_seconds(session, reward_id)
+                    global_delay = redeem.master_delay(session, reward_id)
 
-        # earliest-free with the MOST points: richest eligible account pays
-        eligible.sort(key=lambda x: x[0], reverse=True)
-        bal, acc = eligible[0]
+                # accounts with enough points (regardless of cooldown) + their wait
+                funded = []
+                for r in redeemers:
+                    if not r["logged_in"]:
+                        continue
+                    with self._lock:
+                        bal = self._balances.get(r["id"])
+                    if bal is None or bal < cost:
+                        continue
+                    funded.append((bal, r, redeem.cooldown_remaining(r["id"], reward_id)))
+                if not funded:
+                    # waiting can't conjure points -> drop now
+                    self._note_trigger(entry, nick, ok=False,
+                                       message="Kein Account mit genug Punkten")
+                    return
+
+                grem = redeem.global_cooldown_remaining(reward_id)
+                free = [(bal, r) for bal, r, rem in funded if rem <= 0]
+                if grem <= 0 and free:
+                    # FIRE: richest free account pays
+                    free.sort(key=lambda x: x[0], reverse=True)
+                    bal, acc = free[0]
+                    self._fire(entry, nick, reward, channel_id, acc, bal, cost,
+                               per_account_cd, global_delay)
+                    return
+
+                # can't fire yet -> wait until the global slot AND an account free
+                acct_wait = 0.0 if free else min(rem for _, _, rem in funded)
+                wait = max(grem, acct_wait) or 0.5
+                if time.monotonic() + wait > deadline:
+                    self._note_trigger(entry, nick, ok=False,
+                                       message=f"Cooldown zu lang (> {int(self.MAX_QUEUE_WAIT)}s) – verworfen")
+                    return
+                # coalesce: only one queued worker per command
+                if not queued_here:
+                    with self._lock:
+                        if token in self._queued:
+                            return
+                        self._queued.add(token)
+                        queued_here = True
+                if not announced_queue:
+                    announced_queue = True
+                    self._note_trigger(entry, nick, ok=False,
+                                       message=f"eingereiht – feuert nach Cooldown (~{wait:.0f}s)")
+                if self._stop.wait(min(wait, 3.0)):
+                    return  # interruptible wait; re-check on the next loop
+        finally:
+            if queued_here:
+                with self._lock:
+                    self._queued.discard(token)
+
+    def _fire(self, entry, nick, reward, channel_id, acc, bal, cost,
+              per_account_cd, global_delay):
+        """Redeem `reward` with `acc` and apply cooldowns/balance bookkeeping."""
+        reward_id = reward["id"]
         proxies = acc["proxy"].requests_proxies if acc["proxy"] else None
         res = redeem.redeem_reward(acc["token"], proxies, channel_id, reward)
         if res["ok"]:
             # configured per-account cooldown (min the small rotate fallback so a
-            # burst never re-picks the same account in the same instant), plus the
-            # configured global spacing
+            # burst never re-picks the same account at once) + global spacing
             redeem.set_account_cooldown(acc["id"], reward_id,
                                         max(per_account_cd, chat_redeem.ROTATE_COOLDOWN))
             redeem.set_global_cooldown(reward_id, global_delay)
             now = time.monotonic()
             with self._lock:
-                # re-read under the lock so a concurrent decrement isn't lost
                 cur = self._balances.get(acc["id"], bal)
                 self._balances[acc["id"]] = max(0, cur - cost)
                 self._spent_at[acc["id"]] = now
@@ -363,14 +422,11 @@ class ChatRedeemManager(threading.Thread):
         # ---- failure: keep the rotation honest so we don't fail-loop on one acc
         reason = res.get("reason")
         if reason == "insufficient_points":
-            # cache was stale-high -> drop this account's cached balance so the
-            # next fire rotates to the next-richest instead of re-failing here
             with self._lock:
-                self._balances[acc["id"]] = 0
+                self._balances[acc["id"]] = 0  # stale-high -> rotate to next-richest
         elif reason == "server_cooldown":
             redeem.set_account_cooldown(acc["id"], reward_id, max(per_account_cd, 30.0))
         elif reason in redeem.PERMANENT_REASONS:
-            # reward-level block (out of stock / disabled / paused): don't hammer
             redeem.set_global_cooldown(reward_id, max(global_delay, 60.0))
         self._record_event(
             acc["id"],

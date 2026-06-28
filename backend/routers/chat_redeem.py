@@ -87,6 +87,16 @@ def get_status(session: Session = Depends(get_session)):
     }
 
 
+@router.post("/announce")
+def announce_now():
+    """Re-post the ON announcement now (with the current saved commands)."""
+    res = chat_redeem_manager.announce_now()
+    if not res.get("ok"):
+        raise HTTPException(400, "Modul läuft nicht / Ansage-Account nicht "
+                                 f"verbunden ({res.get('reason') or 'aus'})")
+    return res
+
+
 class ChatTest(BaseModel):
     message: str | None = None
 
