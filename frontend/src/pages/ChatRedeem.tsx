@@ -17,8 +17,14 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 const byReward = (a: Reward, b: Reward) =>
   a.isEnabled === b.isEnabled ? a.cost - b.cost : a.isEnabled ? -1 : 1;
 
-const blankCmd = (): ChatRedeemCommand => ({
-  command: "!", reward_id: "", reward_title: "", cooldown: 30, enabled: true,
+// local editing type: a stable _key for React list identity (stripped on save)
+type EditCmd = ChatRedeemCommand & { _key: string };
+const newKey = () =>
+  (globalThis.crypto?.randomUUID?.() ?? `k${Date.now()}${Math.random()}`);
+const withKey = (c: ChatRedeemCommand): EditCmd => ({ ...c, _key: newKey() });
+
+const blankCmd = (): EditCmd => ({
+  command: "!", reward_id: "", reward_title: "", cooldown: 30, enabled: true, _key: newKey(),
 });
 
 export default function ChatRedeem() {
@@ -34,7 +40,7 @@ export default function ChatRedeem() {
   const [channel, setChannel] = useState("");
   const [announcer, setAnnouncer] = useState("");
   const [enabled, setEnabled] = useState(false);
-  const [commands, setCommands] = useState<ChatRedeemCommand[]>([]);
+  const [commands, setCommands] = useState<EditCmd[]>([]);
   const [onText, setOnText] = useState("");
   const [offText, setOffText] = useState("");
   const [rewards, setRewards] = useState<Reward[]>([]);
@@ -50,17 +56,18 @@ export default function ChatRedeem() {
       setChannel(loaded.channel);
       setAnnouncer(loaded.announcer);
       setEnabled(loaded.enabled);
-      setCommands(loaded.commands.length ? loaded.commands : [blankCmd()]);
+      setCommands(loaded.commands.length ? loaded.commands.map(withKey) : [blankCmd()]);
       setOnText(loaded.on_text);
       setOffText(loaded.off_text);
       setInitialized(true);
     }
   }, [loaded, initialized]);
 
-  // keep the local enabled flag in sync with the server (e.g. after a toggle)
+  // keep the local enabled flag in sync with the server (e.g. after a toggle),
+  // but not while a toggle is in flight (would briefly revert the optimistic UI)
   useEffect(() => {
-    if (loaded && initialized) setEnabled(loaded.enabled);
-  }, [loaded, initialized]);
+    if (loaded && initialized && !toggling) setEnabled(loaded.enabled);
+  }, [loaded, initialized, toggling]);
 
   const loadRewards = async () => {
     const ch = channel.trim().toLowerCase();
@@ -116,16 +123,18 @@ export default function ChatRedeem() {
     }
   };
 
-  const cleanCommands = () =>
+  // strip the local _key, trim, and drop incomplete/invalid rows (a command
+  // must be a prefix sigil + a char, e.g. "!flash" or "?flash", and have a reward)
+  const cleanCommands = (): ChatRedeemCommand[] =>
     commands
-      .map((c) => ({ ...c, command: c.command.trim() }))
-      .filter((c) => c.command && c.command !== "!" && c.reward_id);
+      .map(({ _key, ...c }) => ({ ...c, command: c.command.trim().toLowerCase() }))
+      .filter((c) => c.command.length >= 2 && /^[^a-z0-9\s]/.test(c.command) && c.reward_id);
 
   const saveCommands = async () => {
     setSavingCmds(true);
     try {
       const saved = await api.putChatRedeemConfig({ commands: cleanCommands() });
-      setCommands(saved.commands.length ? saved.commands : [blankCmd()]);
+      setCommands(saved.commands.length ? saved.commands.map(withKey) : [blankCmd()]);
       qc.invalidateQueries({ queryKey: ["chat-redeem-status"] });
       setMsg("✅ Commands gespeichert");
     } catch (e) {
@@ -151,9 +160,11 @@ export default function ChatRedeem() {
   const rt = status?.runtime;
   const balById = new Map<number, number | null>((status?.redeemers ?? []).map((r) => [r.id, r.balance]));
   const sortedRewards = [...rewards].sort(byReward);
+  // mirror the backend's render_on_text: only enabled commands that have a
+  // reward and a valid sigil prefix, lowercased (so the preview matches chat)
   const activeCmdList = commands
-    .filter((c) => c.enabled && c.command.trim() && c.command.trim() !== "!")
-    .map((c) => c.command.trim())
+    .filter((c) => c.enabled && c.reward_id && /^[^a-z0-9\s]/.test(c.command.trim().toLowerCase()) && c.command.trim().length >= 2)
+    .map((c) => c.command.trim().toLowerCase())
     .join(" ");
 
   return (
@@ -176,10 +187,12 @@ export default function ChatRedeem() {
       </div>
 
       <p className="text-sm text-zinc-400">
-        Liest den Chat des Streamers. Schreibt ein Zuschauer einen Command (z. B. <b>!flash</b>),
-        löst der zuerst freie <b>Chat-Einlöser</b>-Account <b>mit den meisten Punkten</b> die
-        zugeordnete Belohnung ein. Beim An- und Ausschalten postet der Ansage-Account eine Nachricht
-        im Chat. Cooldown pro Command verhindert Spam.
+        Liest den Chat des Streamers. Schreibt ein Zuschauer einen Command (z. B. <b>!flash</b> oder
+        <b> ?flash</b>), löst der zuerst freie <b>Chat-Einlöser</b>-Account <b>mit den meisten Punkten</b>
+        die zugeordnete Belohnung ein. Der Command muss <b>exakt</b> so getippt werden, wie du ihn
+        einträgst, und mit einem Zeichen wie <b>! ? #</b> beginnen (ein normales Wort wie „flash" würde
+        sonst bei jeder Chat-Nachricht auslösen). Beim An- und Ausschalten postet der Ansage-Account
+        eine Nachricht im Chat. Cooldown pro Command verhindert Spam.
       </p>
 
       {/* Live status */}
@@ -188,7 +201,7 @@ export default function ChatRedeem() {
         <div><div className="text-zinc-500">Ansage-Account</div>
           <div>{rt?.observer_connected ? `🟢 ${rt.announcer}` : rt?.announcer ? `⏳ ${rt.announcer}` : "—"}</div></div>
         <div><div className="text-zinc-500">Channel</div><div>{rt?.channel ?? "—"}</div></div>
-        <div><div className="text-zinc-500">Letzte Auslösungen</div><div>{rt?.last_triggers.length ?? 0}</div></div>
+        <div><div className="text-zinc-500">Letzte Auslösungen</div><div>{rt?.last_triggers?.length ?? 0}</div></div>
         <div className="col-span-2 sm:col-span-4">
           <div className="text-zinc-500">Grund / Diagnose</div>
           <div className={rt?.active ? "text-emerald-400" : "text-amber-400"}>{rt?.reason ?? "—"}</div>
@@ -210,7 +223,7 @@ export default function ChatRedeem() {
         <Field label="Streamer-Channel" hint="Chat, der gelesen wird, und Channel, in dem eingelöst wird">
           <Input value={channel} placeholder="z. B. j4nkttv"
             onChange={(e) => setChannel(e.target.value)}
-            onBlur={() => saveField({ channel: channel.trim().toLowerCase() })} />
+            onBlur={() => { const ch = channel.trim().toLowerCase(); setChannel(ch); saveField({ channel: ch }); }} />
         </Field>
         <Field label="Ansage-Account" hint="postet die An/Aus-Nachricht und liest den Chat (muss eingeloggt sein)">
           <select
@@ -236,7 +249,7 @@ export default function ChatRedeem() {
         </Field>
         <div className="rounded-md border border-zinc-800 bg-zinc-950 p-2 text-xs text-zinc-300">
           <span className="text-zinc-500">Vorschau: </span>
-          {onText.replace("{commands}", activeCmdList || "(keine)")}
+          {onText.replace(/\{commands\}/g, activeCmdList || "(keine)")}
         </div>
         <Field label="Aus-Nachricht (beim Stoppen)">
           <Textarea rows={2} value={offText}
@@ -255,10 +268,10 @@ export default function ChatRedeem() {
         </div>
 
         {commands.map((c, i) => (
-          <div key={i} className="flex flex-wrap items-end gap-2 border-t border-zinc-800 pt-3">
+          <div key={c._key} className="flex flex-wrap items-end gap-2 border-t border-zinc-800 pt-3">
             <div className="w-28">
               <label className="text-[11px] text-zinc-400">Command</label>
-              <Input value={c.command} placeholder="!flash"
+              <Input value={c.command} placeholder="!flash oder ?flash"
                 onChange={(e) => setCmd(i, { command: e.target.value })} />
             </div>
             <div className="min-w-[180px] flex-1">
@@ -285,7 +298,7 @@ export default function ChatRedeem() {
             <div className="w-24">
               <label className="text-[11px] text-zinc-400">Cooldown (s)</label>
               <Input type="number" min={0} value={String(c.cooldown ?? 30)}
-                onChange={(e) => setCmd(i, { cooldown: Number(e.target.value) || 0 })} />
+                onChange={(e) => setCmd(i, { cooldown: e.target.value === "" ? 30 : Math.max(0, Number(e.target.value) || 0) })} />
             </div>
             <label className="flex h-9 items-center gap-1.5 text-xs text-zinc-400">
               <input type="checkbox" checked={c.enabled}

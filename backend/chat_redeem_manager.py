@@ -33,6 +33,11 @@ logger = logging.getLogger("backend.chat_redeem_manager")
 
 
 class ChatRedeemManager(threading.Thread):
+    # On a command hit we reserve only this short window up front (so a burst of
+    # the same command in the same instant spawns one worker); the FULL per-
+    # command cooldown is applied only after an actual redemption.
+    BURST_DEDUPE = 2.0
+
     def __init__(self, poll_interval: float = 3.0, balance_refresh: float = 45.0):
         super().__init__(name="chat-redeem-manager", daemon=True)
         self.poll_interval = poll_interval
@@ -55,6 +60,7 @@ class ChatRedeemManager(threading.Thread):
         # runtime caches
         self._cmd_cd: dict = {}            # command token -> monotonic time free again
         self._balances: dict = {}          # account_id -> cached points balance
+        self._spent_at: dict = {}          # account_id -> monotonic of last local spend
         self._reward_cache: dict = {}      # reward_id -> reward dict (from catalogue)
         self._channel_id: "str | None" = None
         self._last_balance_refresh = 0.0
@@ -148,10 +154,14 @@ class ChatRedeemManager(threading.Thread):
                 and self._observer_channel == cfg["channel"])
         if alive and same:
             return None
-        # identity changed or connection down -> rebuild (no off-announce: this is
-        # a reconnect, not a disable; ON re-announces once the new link joins).
-        # Capture why a dead link failed so the UI can show it (kept until a
-        # later attempt actually joins).
+        if not same:
+            # announcer/channel changed -> treat as a fresh session so the NEW
+            # announcer re-announces ON once it joins (a pure reconnect keeps
+            # _active, so a flaky link doesn't spam ON/OFF on every reconnect)
+            self._active = False
+        # identity changed or connection down -> rebuild (no off-announce here:
+        # ON re-announces once the new link joins). Capture why a dead link
+        # failed so the UI can show it (kept until a later attempt actually joins).
         if self._observer is not None:
             self._connect_error = (self._observer.connect_error
                                    or self._observer.notice_error
@@ -179,11 +189,14 @@ class ChatRedeemManager(threading.Thread):
                     rec["username"], cfg["channel"])
 
     def _teardown_observer(self):
-        obs, t = self._observer, self._observer_thread
-        self._observer = None
-        self._observer_thread = None
-        self._observer_username = ""
-        self._observer_channel = ""
+        # swap the pointers out atomically so a concurrent caller (stop() vs the
+        # tick thread) can't double-die/double-join the same observer
+        with self._lock:
+            obs, t = self._observer, self._observer_thread
+            self._observer = None
+            self._observer_thread = None
+            self._observer_username = ""
+            self._observer_channel = ""
         if obs is not None:
             try:
                 obs.die()
@@ -194,7 +207,11 @@ class ChatRedeemManager(threading.Thread):
 
     def _deactivate(self, announce: bool):
         """Announce OFF (if we were active + still connected) and drop the link."""
-        if announce and self._active:
+        was_active = self._active
+        # stop accepting new redeems immediately, BEFORE the flush wait, so chat
+        # messages arriving mid-shutdown don't spawn redemptions
+        self._active = False
+        if announce and was_active:
             obs = self._observer
             if obs is not None and obs.joined.is_set():
                 self._announce(self._off_text())
@@ -202,7 +219,6 @@ class ChatRedeemManager(threading.Thread):
                 # disconnect — otherwise the OFF message is dropped unsent
                 time.sleep(2.0)
                 logger.info("chat-redeem OFF announced")
-        self._active = False
         self._teardown_observer()
 
     # ------------------------------------------------------------------ announce
@@ -226,23 +242,41 @@ class ChatRedeemManager(threading.Thread):
     # ------------------------------------------------------------------ chat in
     def _on_chat_message(self, nick: str, msg: str):
         """Runs in the observer's IRC thread for every public chat message."""
+        parts = (msg or "").strip().split()
+        if not parts:
+            return
+        # Exact first-token match against the configured commands. Each stored
+        # command carries its own prefix sigil (e.g. "!flash" or "?flash"), so a
+        # bare word in normal chat never equals a command and never fires.
+        token = chat_redeem.normalize_command(parts[0])
+        if not token:
+            return
         with self._lock:
             if not self._active:
                 return
-            token = chat_redeem.normalize_command(msg)
             entry = self._commands.get(token)
             if entry is None or not entry["enabled"]:
                 return
             now = time.monotonic()
             if now < self._cmd_cd.get(token, 0.0):
                 return  # command on cooldown -> ignore (anti-spam)
-            # reserve the cooldown immediately so a burst of the same command in
-            # the same instant only fires once
-            self._cmd_cd[token] = now + entry["cooldown"]
+            # reserve only a short burst-dedupe window now (so the same command
+            # in the same instant spawns one worker); the FULL configured
+            # cooldown is applied in _do_redeem only once something is spent
+            self._cmd_cd[token] = now + (min(entry["cooldown"], self.BURST_DEDUPE) or 1.0)
         threading.Thread(target=self._do_redeem, args=(entry, nick), daemon=True,
                          name=f"chat-redeem-{entry['command']}").start()
 
     def _do_redeem(self, entry: dict, nick: str):
+        # never let a worker thread die silently (a DB/transient error would
+        # otherwise burn the command's reservation with no diagnostic)
+        try:
+            self._do_redeem_inner(entry, nick)
+        except Exception:  # noqa: BLE001
+            logger.exception("chat-redeem worker failed for %s", entry.get("command"))
+            self._note_trigger(entry, nick, ok=False, message="interner Fehler")
+
+    def _do_redeem_inner(self, entry: dict, nick: str):
         reward_id = entry["reward_id"]
         with self._lock:
             reward = self._reward_cache.get(reward_id)
@@ -253,6 +287,12 @@ class ChatRedeemManager(threading.Thread):
                                message="Reward-Katalog noch nicht geladen")
             with self._lock:
                 self._last_balance_refresh = 0.0   # pull a fresh catalogue soon
+            return
+
+        # input-required rewards need real viewer text we don't capture -> skip
+        if reward.get("isUserInputRequired"):
+            self._note_trigger(entry, nick, ok=False,
+                               message="Reward erfordert Eingabe – nicht unterstützt")
             return
 
         # Honor the cooldowns configured for this reward on the "Einlösen" page:
@@ -299,24 +339,39 @@ class ChatRedeemManager(threading.Thread):
             redeem.set_account_cooldown(acc["id"], reward_id,
                                         max(per_account_cd, chat_redeem.ROTATE_COOLDOWN))
             redeem.set_global_cooldown(reward_id, global_delay)
+            now = time.monotonic()
             with self._lock:
-                self._balances[acc["id"]] = max(0, bal - cost)
+                # re-read under the lock so a concurrent decrement isn't lost
+                cur = self._balances.get(acc["id"], bal)
+                self._balances[acc["id"]] = max(0, cur - cost)
+                self._spent_at[acc["id"]] = now
+                # apply the FULL per-command cooldown only now (a real spend)
+                self._cmd_cd[entry["command"]] = now + entry["cooldown"]
             self._record_event(
                 acc["id"],
                 f'Chat „{entry["command"]}" von {nick} → '
                 f'„{reward["title"]}" eingelöst ({acc["username"]})')
             self._note_trigger(entry, nick, ok=True, message=acc["username"])
-        else:
-            # server cooldown / transient -> back this account off briefly so the
-            # next fire of this command rotates to someone else
-            if res.get("reason") == "server_cooldown":
-                redeem.set_account_cooldown(acc["id"], reward_id, 30.0)
-            self._record_event(
-                acc["id"],
-                f'Chat „{entry["command"]}" von {nick} → '
-                f'„{reward["title"]}" fehlgeschlagen: {res.get("message")}')
-            self._note_trigger(entry, nick, ok=False,
-                               message=f'{acc["username"]}: {res.get("message")}')
+            return
+
+        # ---- failure: keep the rotation honest so we don't fail-loop on one acc
+        reason = res.get("reason")
+        if reason == "insufficient_points":
+            # cache was stale-high -> drop this account's cached balance so the
+            # next fire rotates to the next-richest instead of re-failing here
+            with self._lock:
+                self._balances[acc["id"]] = 0
+        elif reason == "server_cooldown":
+            redeem.set_account_cooldown(acc["id"], reward_id, max(per_account_cd, 30.0))
+        elif reason in redeem.PERMANENT_REASONS:
+            # reward-level block (out of stock / disabled / paused): don't hammer
+            redeem.set_global_cooldown(reward_id, max(global_delay, 60.0))
+        self._record_event(
+            acc["id"],
+            f'Chat „{entry["command"]}" von {nick} → '
+            f'„{reward["title"]}" fehlgeschlagen: {res.get("message")}')
+        self._note_trigger(entry, nick, ok=False,
+                           message=f'{acc["username"]}: {res.get("message")}')
 
     # ------------------------------------------------------------------ balances
     def _maybe_refresh_balances(self, cfg):
@@ -328,8 +383,13 @@ class ChatRedeemManager(threading.Thread):
                 return
             self._refreshing = True
             self._last_balance_refresh = now
-        threading.Thread(target=self._refresh_balances, args=(cfg,), daemon=True,
-                         name="chat-redeem-balances").start()
+        try:
+            threading.Thread(target=self._refresh_balances, args=(cfg,), daemon=True,
+                             name="chat-redeem-balances").start()
+        except Exception:  # noqa: BLE001 — never leave _refreshing stuck True
+            with self._lock:
+                self._refreshing = False
+            logger.exception("chat-redeem: could not start balance refresh")
 
     def _refresh_balances(self, cfg):
         try:
@@ -350,8 +410,17 @@ class ChatRedeemManager(threading.Thread):
                 if catalogue is None:
                     channel_id = state["channelId"]
                     catalogue = {rw["id"]: rw for rw in state["rewards"]}
+            now = time.monotonic()
             with self._lock:
-                self._balances = balances
+                # merge: don't let a stale server balance UNDO a very recent local
+                # spend (Twitch's balance often hasn't reflected the spend yet)
+                merged = dict(balances)
+                for aid, fetched in balances.items():
+                    cached = self._balances.get(aid)
+                    spent = self._spent_at.get(aid, 0.0)
+                    if cached is not None and (now - spent) < 90 and fetched > cached:
+                        merged[aid] = cached
+                self._balances = merged
                 if catalogue is not None:
                     self._reward_cache = catalogue
                     self._channel_id = channel_id

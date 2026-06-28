@@ -61,12 +61,26 @@ def set_setting(session: Session, key: str, value: str) -> None:
 
 
 def normalize_command(raw: str) -> str:
-    """Canonical command token: lowercased, single leading '!', first word only."""
+    """Canonical command token: lowercased, first word only, prefix kept as-is.
+
+    The prefix sigil the user chose (``!``, ``?``, ``#`` …) is preserved, so
+    "?flash" stays "?flash" — viewers must type it exactly. We do NOT force a
+    "!" (doing so used to make a bare word like "flash" match "!flash" and spend
+    points on ordinary chat).
+    """
     c = (raw or "").strip().lower()
     if not c:
         return ""
-    c = c.split()[0]
-    return "!" + c.lstrip("!")
+    return c.split()[0]
+
+
+def is_valid_command(cmd: str) -> bool:
+    """A command must be a prefix sigil + at least one char (e.g. "!flash").
+
+    Requiring a non-alphanumeric first char stops a bare word from accidentally
+    triggering on normal chat messages.
+    """
+    return len(cmd) >= 2 and not cmd[0].isalnum()
 
 
 def normalize_commands(items) -> list:
@@ -77,7 +91,7 @@ def normalize_commands(items) -> list:
             continue
         cmd = normalize_command(it.get("command", ""))
         rid = (it.get("reward_id") or "").strip()
-        if not cmd or not rid or cmd in seen:
+        if not is_valid_command(cmd) or not rid or cmd in seen:
             continue
         seen.add(cmd)
         try:
@@ -97,9 +111,10 @@ def normalize_commands(items) -> list:
 def get_config(session: Session) -> dict:
     raw = _get_setting(session, COMMANDS_KEY)
     try:
-        cmds = normalize_commands(json.loads(raw) if raw else [])
+        data = json.loads(raw) if raw else []
     except ValueError:
-        cmds = []
+        data = []
+    cmds = normalize_commands(data if isinstance(data, list) else [])
     return {
         "enabled": _get_setting(session, ENABLED_KEY).strip().lower()
         in ("1", "true", "yes", "on"),

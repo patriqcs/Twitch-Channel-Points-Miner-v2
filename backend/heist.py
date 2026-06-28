@@ -345,6 +345,12 @@ class HeistIRC(SingleServerIRCBot):
                      or "login unsuccessful" in text.lower()):
             self.notice_error = text
 
+    # Twitch sends login/ban rejections as a NOTICE to target "*", which the irc
+    # library dispatches as a *privnotice* (the target isn't a channel) — so
+    # on_privnotice is the one that actually fires; the others are belt-and-braces.
+    def on_privnotice(self, connection, event):
+        self._capture_notice(event)
+
     def on_notice(self, connection, event):
         self._capture_notice(event)
 
