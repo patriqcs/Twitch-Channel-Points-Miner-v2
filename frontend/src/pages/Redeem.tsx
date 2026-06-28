@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Gift, Loader2, Users } from "lucide-react";
+import { Gift, Loader2, Square, Users } from "lucide-react";
 import { api, type Reward } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
 
@@ -28,18 +28,32 @@ export default function Redeem() {
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [cdSet, setCdSet] = useState<Set<string>>(new Set());             // "accId:rewardId" on cooldown
+  const [runs, setRuns] = useState<Record<string, { fired: number; count: number }>>({}); // reward_id -> live progress
+  const [cancelling, setCancelling] = useState<Set<string>>(new Set());   // reward_ids with a pending cancel
 
   const refreshCooldowns = () =>
     api.getCooldowns()
       .then((cds) => setCdSet(new Set(cds.map((c) => `${c.account_id}:${c.reward_id}`))))
       .catch(() => {});
 
-  // poll cooldowns so the "X/Y ready" count ticks down (only while rewards are shown)
+  const refreshRuns = () =>
+    api.redeemAllStatus()
+      .then((rs) => {
+        setRuns(Object.fromEntries(rs.map((r) => [r.reward_id, { fired: r.fired, count: r.count }])));
+        // a reward that's no longer running has finished/aborted -> clear its pending-cancel flag
+        const live = new Set(rs.map((r) => r.reward_id));
+        setCancelling((c) => new Set([...c].filter((id) => live.has(id))));
+      })
+      .catch(() => {});
+
+  // poll cooldowns + running master redeems while rewards are shown
   useEffect(() => {
     if (rewards.length === 0) return;
     refreshCooldowns();
-    const t = setInterval(refreshCooldowns, 5000);
-    return () => clearInterval(t);
+    refreshRuns();
+    const tCd = setInterval(refreshCooldowns, 5000);
+    const tRun = setInterval(refreshRuns, 1500);
+    return () => { clearInterval(tCd); clearInterval(tRun); };
   }, [rewards.length]);
 
   // accounts ready for a reward: enough points AND not on cooldown
@@ -130,11 +144,23 @@ export default function Redeem() {
       const cnt = Number(allCount[rewardId]) || undefined;
       const r = await api.redeemAll({ channel: channel.trim().toLowerCase(), reward_id: rewardId, count: cnt });
       setToast(`„${r.reward}": ${r.scheduled} Einlösungen über ${r.accounts} Accounts geplant (Spacing ${r.global_delay}s). Läuft im Hintergrund — siehe Logs.`);
+      refreshRuns();
       setTimeout(() => { accounts.forEach((a) => refreshOne(a.id)); refreshCooldowns(); }, 1500);
     } catch (e) {
       setToast((e as Error).message);
     } finally {
       setAllBusy(null);
+    }
+  };
+
+  const doCancelAll = async (rewardId: string) => {
+    setCancelling((c) => new Set(c).add(rewardId));
+    try {
+      await api.cancelRedeemAll({ reward_id: rewardId });
+      refreshRuns();
+    } catch (e) {
+      setToast((e as Error).message);
+      setCancelling((c) => { const n = new Set(c); n.delete(rewardId); return n; });
     }
   };
 
@@ -210,11 +236,22 @@ export default function Redeem() {
                     onChange={(e) => setMasterDelays((m) => ({ ...m, [r.id]: Number(e.target.value) || 0 }))}
                     onBlur={() => saveConfig({ master_delays: { ...masterDelays, [r.id]: masterDelays[r.id] ?? 0 } })} />
                 </div>
-                <Button size="sm" disabled={allBusy === r.id || !r.isEnabled || r.isPaused}
-                  onClick={() => doRedeemAll(r.id)}>
-                  {allBusy === r.id ? <Loader2 className="animate-spin" size={14} /> : <Users size={14} />}
-                  Einlösen
-                </Button>
+                {runs[r.id] ? (
+                  <Button size="sm" variant="danger"
+                    disabled={cancelling.has(r.id)}
+                    onClick={() => doCancelAll(r.id)}>
+                    {cancelling.has(r.id)
+                      ? <Loader2 className="animate-spin" size={14} />
+                      : <Square size={14} />}
+                    {runs[r.id].fired}/{runs[r.id].count} {cancelling.has(r.id) ? "Stoppt…" : "Stop"}
+                  </Button>
+                ) : (
+                  <Button size="sm" disabled={allBusy === r.id || !r.isEnabled || r.isPaused}
+                    onClick={() => doRedeemAll(r.id)}>
+                    {allBusy === r.id ? <Loader2 className="animate-spin" size={14} /> : <Users size={14} />}
+                    Einlösen
+                  </Button>
+                )}
               </div>
             );
           })}

@@ -204,10 +204,19 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) }
     ),
   redeemAll: (body: { channel: string; reward_id: string; count?: number; global_delay?: number }) =>
-    req<{ reward: string; accounts: number; scheduled: number; global_delay: number }>(
+    req<{ reward: string; accounts: number; scheduled: number; global_delay: number; run_id: string }>(
       "/api/redeem/all",
       { method: "POST", body: JSON.stringify(body) }
     ),
+  redeemAllStatus: () =>
+    req<{ run_id: string; reward_id: string; title: string; fired: number; count: number }[]>(
+      "/api/redeem/all/status"
+    ),
+  cancelRedeemAll: (body: { reward_id?: string; run_id?: string }) =>
+    req<{ cancelled: number }>("/api/redeem/all/cancel", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   getCooldowns: () =>
     req<{ account_id: number; reward_id: string; remaining: number }[]>("/api/redeem/cooldowns"),
   getRedeemConfig: () =>

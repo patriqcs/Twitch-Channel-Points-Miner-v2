@@ -64,6 +64,24 @@ def cooldowns():
     return redeem_mod.active_cooldowns()
 
 
+@router.get("/all/status")
+def all_status():
+    """Running 'all accounts' redeems with live fired/count progress."""
+    return redeem_mod.active_master_runs()
+
+
+class CancelRequest(BaseModel):
+    run_id: str | None = None
+    reward_id: str | None = None
+
+
+@router.post("/all/cancel")
+def cancel_all(body: CancelRequest):
+    """Stop running 'all accounts' redeems (by reward_id, run_id, or all)."""
+    n = redeem_mod.cancel_master_run(run_id=body.run_id, reward_id=body.reward_id)
+    return {"cancelled": n}
+
+
 @router.get("/{account_id}/channel-points")
 def channel_points(account_id: int, channel: str,
                    session: Session = Depends(get_session)):
@@ -137,11 +155,11 @@ def redeem_all(body: AllRedeemRequest, session: Session = Depends(get_session)):
     # must type a number to spam more across the accounts.
     count = body.count if body.count and body.count > 0 else 1
     count = min(count, 500)
-    redeem_mod.schedule_master_redeem(
+    run_id = redeem_mod.schedule_master_redeem(
         channel_id, reward, candidates, cd_secs, gdelay, count, _log_event
     )
     return {"reward": reward["title"], "accounts": len(candidates),
-            "scheduled": count, "global_delay": gdelay}
+            "scheduled": count, "global_delay": gdelay, "run_id": run_id}
 
 
 class RedeemRequest(BaseModel):

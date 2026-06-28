@@ -32,6 +32,12 @@ _cooldowns: dict = {}            # (account_id, reward_id) -> monotonic time whe
 _global_free: dict = {}          # reward_id -> monotonic time when reward may fire again globally
 _cd_lock = threading.Lock()
 
+# ---- in-memory registry of running "all accounts" master-redeem runs ----
+# run_id -> {stop: Event, reward_id, title, fired, count}. Lets the UI show a
+# live progress + cancel a long-running spam before it finishes.
+_master_runs: dict = {}
+_master_lock = threading.Lock()
+
 # error codes that permanently block an account for a reward (drop from rotation)
 PERMANENT_REASONS = {"insufficient_points", "out_of_stock", "disabled", "paused"}
 
@@ -118,8 +124,37 @@ def active_cooldowns() -> list:
     return out
 
 
+def active_master_runs() -> list:
+    """Snapshot of running 'all accounts' redeems so the UI can show progress."""
+    with _master_lock:
+        return [
+            {"run_id": rid, "reward_id": info["reward_id"], "title": info["title"],
+             "fired": info["fired"], "count": info["count"]}
+            for rid, info in _master_runs.items()
+        ]
+
+
+def cancel_master_run(run_id: "str | None" = None,
+                      reward_id: "str | None" = None) -> int:
+    """Signal matching master-redeem runs to stop. With no filter, stops all.
+
+    Returns how many runs were signalled. The threads finish their current
+    in-flight call (if any) and then exit before their next fire.
+    """
+    n = 0
+    with _master_lock:
+        for rid, info in _master_runs.items():
+            if (run_id is not None and rid != run_id):
+                continue
+            if (reward_id is not None and info["reward_id"] != reward_id):
+                continue
+            info["stop"].set()
+            n += 1
+    return n
+
+
 def schedule_master_redeem(channel_id, reward, candidates, per_account_cd,
-                           global_delay, count, log_event):
+                           global_delay, count, log_event) -> str:
     """Background thread: fire `reward` `count` times across `candidates`,
     always taking the account that is free earliest, respecting each account's
     per-account cooldown AND a global spacing between any two fires. Accounts
@@ -127,41 +162,72 @@ def schedule_master_redeem(channel_id, reward, candidates, per_account_cd,
 
     candidates: list of (account_id, username, token, proxies)
     log_event: fn(account_id|None, ok, message) -> None
+
+    Returns a run_id; the run is cancellable via cancel_master_run() and its
+    progress is visible via active_master_runs().
     """
+    run_id = uuid.uuid4().hex
+    count = max(1, count)
+    stop = threading.Event()
+    with _master_lock:
+        _master_runs[run_id] = {"stop": stop, "reward_id": reward["id"],
+                                "title": reward["title"], "fired": 0, "count": count}
+
     def _run():
         pool = list(candidates)
         rid = reward["id"]
         fired = 0
-        for _ in range(max(1, count)):
-            if not pool:
-                break
-            # account that is free earliest
-            pool.sort(key=lambda a: _available_at(a[0], rid))
-            aid, uname, token, proxies = pool[0]
-            fire_at = max(_available_at(aid, rid), _global_free.get(rid, 0.0))
-            wait = fire_at - time.monotonic()
-            if wait > 0:
-                time.sleep(min(wait, 3600))
-            r = redeem_reward(token, proxies, channel_id, reward)
-            if r["ok"]:
-                set_account_cooldown(aid, rid, per_account_cd)
-                with _cd_lock:
-                    _global_free[rid] = time.monotonic() + global_delay
-                fired += 1
-                log_event(aid, True, f'„{reward["title"]}" eingelöst')
-            elif r.get("reason") in PERMANENT_REASONS:
-                pool = [a for a in pool if a[0] != aid]  # drop from rotation
-                log_event(aid, False, f'„{reward["title"]}": {r.get("message")} (raus)')
-            elif r.get("reason") == "server_cooldown":
-                set_account_cooldown(aid, rid, max(per_account_cd, 5))
-                log_event(aid, False, f'„{reward["title"]}": Server-Cooldown')
+        cancelled = False
+        try:
+            for _ in range(count):
+                if stop.is_set():
+                    cancelled = True
+                    break
+                if not pool:
+                    break
+                # account that is free earliest
+                pool.sort(key=lambda a: _available_at(a[0], rid))
+                aid, uname, token, proxies = pool[0]
+                fire_at = max(_available_at(aid, rid), _global_free.get(rid, 0.0))
+                wait = fire_at - time.monotonic()
+                if wait > 0:
+                    # interruptible wait so a cancel takes effect promptly
+                    if stop.wait(min(wait, 3600)):
+                        cancelled = True
+                        break
+                if stop.is_set():
+                    cancelled = True
+                    break
+                r = redeem_reward(token, proxies, channel_id, reward)
+                if r["ok"]:
+                    set_account_cooldown(aid, rid, per_account_cd)
+                    with _cd_lock:
+                        _global_free[rid] = time.monotonic() + global_delay
+                    fired += 1
+                    with _master_lock:
+                        if run_id in _master_runs:
+                            _master_runs[run_id]["fired"] = fired
+                    log_event(aid, True, f'„{reward["title"]}" eingelöst')
+                elif r.get("reason") in PERMANENT_REASONS:
+                    pool = [a for a in pool if a[0] != aid]  # drop from rotation
+                    log_event(aid, False, f'„{reward["title"]}": {r.get("message")} (raus)')
+                elif r.get("reason") == "server_cooldown":
+                    set_account_cooldown(aid, rid, max(per_account_cd, 5))
+                    log_event(aid, False, f'„{reward["title"]}": Server-Cooldown')
+                else:
+                    set_account_cooldown(aid, rid, max(per_account_cd, 5))
+                    log_event(aid, False, f'„{reward["title"]}": {r.get("message")}')
+            if cancelled:
+                log_event(None, False, f'Master-Einlösen abgebrochen: {fired}/{count}')
             else:
-                set_account_cooldown(aid, rid, max(per_account_cd, 5))
-                log_event(aid, False, f'„{reward["title"]}": {r.get("message")}')
-        log_event(None, True, f'Master-Einlösen fertig: {fired}/{count}')
+                log_event(None, True, f'Master-Einlösen fertig: {fired}/{count}')
+        finally:
+            with _master_lock:
+                _master_runs.pop(run_id, None)
 
     t = threading.Thread(target=_run, name="master-redeem", daemon=True)
     t.start()
+    return run_id
 
 # Same public web client id the twitch.tv site uses; Helix/OAuth app tokens are
 # NOT allowed to run these private operations.
