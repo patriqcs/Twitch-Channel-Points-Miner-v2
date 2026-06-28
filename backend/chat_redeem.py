@@ -138,13 +138,19 @@ def load_redeemer_accounts(session: Session) -> list:
 
 
 def announcer_creds(session: Session, announcer: str) -> "dict | None":
-    """Creds for the announcer account (reads chat + posts on/off), or None."""
+    """Creds for the announcer account (reads chat + posts on/off).
+
+    Returns the record (with a ``logged_in`` flag) or None if no such account
+    exists. The username is matched CASE-INSENSITIVELY: the announcer setting is
+    stored lowercased but real usernames may contain capitals (the cookie file
+    is keyed by the account's actual-case username, which ``_creds`` uses).
+    """
     if not announcer:
         return None
+    from sqlalchemy import func
     a = session.exec(
-        select(Account).where(Account.username == announcer)
+        select(Account).where(func.lower(Account.username) == announcer.lower())
     ).first()
     if a is None:
         return None
-    rec = _creds(session, a)
-    return rec if rec["logged_in"] else None
+    return _creds(session, a)

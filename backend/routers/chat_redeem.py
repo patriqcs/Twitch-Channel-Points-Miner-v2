@@ -100,7 +100,7 @@ def rewards(channel: str, session: Session = Depends(get_session)):
     cands = [r for r in chat_redeem.load_redeemer_accounts(session) if r["logged_in"]]
     cfg = chat_redeem.get_config(session)
     ann = chat_redeem.announcer_creds(session, cfg["announcer"])
-    if ann is not None and not any(r["id"] == ann["id"] for r in cands):
+    if ann is not None and ann["logged_in"] and not any(r["id"] == ann["id"] for r in cands):
         cands.append(ann)
     for r in cands:
         proxies = r["proxy"].requests_proxies if r["proxy"] else None

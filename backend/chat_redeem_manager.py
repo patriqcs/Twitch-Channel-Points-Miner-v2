@@ -105,13 +105,12 @@ class ChatRedeemManager(threading.Thread):
             return
 
         # (re)connect the announcer if missing/dead or its identity changed
-        self._ensure_observer(cfg)
-        obs = self._observer
-        if obs is None:
-            self._set_reason(f"Ansage-Account „{cfg['announcer']}\" ist in dieser "
-                             "App nicht eingeloggt")
+        err = self._ensure_observer(cfg)
+        if err:
+            self._set_reason(err)
             return
-        if not obs.joined.is_set():
+        obs = self._observer
+        if obs is None or not obs.joined.is_set():
             self._set_reason("verbinde mit dem Chat…")
             return
         if not self._active:
@@ -128,22 +127,24 @@ class ChatRedeemManager(threading.Thread):
             self._reason = reason
 
     # ------------------------------------------------------------------ observer
-    def _ensure_observer(self, cfg):
+    def _ensure_observer(self, cfg) -> "str | None":
+        """Connect/keep the announcer link. Returns an error reason, or None."""
         alive = (self._observer_thread is not None
                  and self._observer_thread.is_alive())
         same = (self._observer_username == cfg["announcer"]
                 and self._observer_channel == cfg["channel"])
         if alive and same:
-            return
+            return None
         # identity changed or connection down -> rebuild (no off-announce: this is
         # a reconnect, not a disable; ON re-announces once the new link joins)
         self._teardown_observer()
         with Session(engine) as session:
             rec = chat_redeem.announcer_creds(session, cfg["announcer"])
         if rec is None:
-            logger.warning("chat-redeem: announcer %r not logged in; cannot connect",
-                           cfg["announcer"])
-            return
+            return f"Ansage-Account „{cfg['announcer']}\" nicht gefunden"
+        if not rec["logged_in"]:
+            return (f"Ansage-Account „{rec['username']}\" hat in dieser App keinen "
+                    "Login-Cookie – bitte hier neu einloggen")
         observer = heist.HeistIRC(
             rec["username"], rec["token"], cfg["channel"], rec["proxy"],
             on_message=self._on_chat_message,
