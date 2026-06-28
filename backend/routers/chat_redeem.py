@@ -1,0 +1,106 @@
+# -*- coding: utf-8 -*-
+"""Chat-command redeemer: config, live status and a reward-catalogue helper.
+
+The heavy lifting (reading chat, firing redemptions, on/off announcements) runs
+in the background ChatRedeemManager (backend/chat_redeem_manager.py); these
+endpoints expose its configuration and state to the UI. Per-account selection
+(which accounts may spend points) is the ``chat_redeemer`` flag on the account,
+toggled via the normal PATCH /api/accounts/{id}.
+"""
+import json
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlmodel import Session, select
+
+from backend import chat_redeem, redeem
+from backend.chat_redeem_manager import chat_redeem_manager
+from backend.db import get_session
+from backend.models import Account
+
+router = APIRouter(prefix="/api/chat-redeem", tags=["chat-redeem"])
+
+
+class CommandIn(BaseModel):
+    command: str
+    reward_id: str
+    reward_title: str | None = None
+    cooldown: float | None = None
+    enabled: bool = True
+
+
+class ChatRedeemConfig(BaseModel):
+    enabled: bool | None = None
+    channel: str | None = None
+    announcer: str | None = None
+    commands: list[CommandIn] | None = None
+
+
+@router.get("/config")
+def get_config(session: Session = Depends(get_session)):
+    return chat_redeem.get_config(session)
+
+
+@router.put("/config")
+def put_config(body: ChatRedeemConfig, session: Session = Depends(get_session)):
+    if body.enabled is not None:
+        chat_redeem.set_setting(session, chat_redeem.ENABLED_KEY,
+                                "1" if body.enabled else "0")
+    if body.channel is not None:
+        chat_redeem.set_setting(session, chat_redeem.CHANNEL_KEY,
+                                body.channel.strip().lower())
+    if body.announcer is not None:
+        chat_redeem.set_setting(session, chat_redeem.ANNOUNCER_KEY,
+                                body.announcer.strip().lower())
+    if body.commands is not None:
+        clean = chat_redeem.normalize_commands([c.model_dump() for c in body.commands])
+        chat_redeem.set_setting(session, chat_redeem.COMMANDS_KEY, json.dumps(clean))
+    session.commit()
+    return chat_redeem.get_config(session)
+
+
+@router.get("/status")
+def get_status(session: Session = Depends(get_session)):
+    """Live coordinator state + the chat_redeemer accounts (login + balance)."""
+    runtime = chat_redeem_manager.status()
+    balances = runtime.get("balances", {})
+    redeemers = []
+    for a in session.exec(
+        select(Account).where(Account.chat_redeemer == True)  # noqa: E712
+    ).all():
+        logged_in = redeem.account_auth_token(a.username) is not None
+        redeemers.append({
+            "id": a.id, "username": a.username, "logged_in": logged_in,
+            # balances keys are ints in-process but become strings over JSON
+            "balance": balances.get(a.id, balances.get(str(a.id))),
+        })
+    return {
+        "runtime": runtime,
+        "config": chat_redeem.get_config(session),
+        "redeemers": redeemers,
+    }
+
+
+@router.get("/rewards")
+def rewards(channel: str, session: Session = Depends(get_session)):
+    """The channel's custom rewards, fetched via any usable account.
+
+    Lets the UI populate the command->reward dropdowns. Prefers a logged-in
+    chat_redeemer account, falling back to the announcer.
+    """
+    ch = channel.strip().lower()
+    if not ch:
+        raise HTTPException(400, "channel required")
+    cands = [r for r in chat_redeem.load_redeemer_accounts(session) if r["logged_in"]]
+    cfg = chat_redeem.get_config(session)
+    ann = chat_redeem.announcer_creds(session, cfg["announcer"])
+    if ann is not None and not any(r["id"] == ann["id"] for r in cands):
+        cands.append(ann)
+    for r in cands:
+        proxies = r["proxy"].requests_proxies if r["proxy"] else None
+        try:
+            return redeem.fetch_channel_points(r["token"], proxies, ch)
+        except redeem.RedeemError:
+            continue
+    raise HTTPException(400, "kein eingeloggter Account zum Laden der Belohnungen "
+                             "(Chat-Einlöser oder Ansage-Account)")

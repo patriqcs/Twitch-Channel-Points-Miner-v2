@@ -10,8 +10,37 @@ export interface Account {
   no_proxy: boolean;
   heist_opener: boolean;
   heist_joiner: boolean;
+  chat_redeemer: boolean;
   created_at: string;
   last_login_at: string | null;
+}
+
+export interface ChatRedeemCommand {
+  command: string;
+  reward_id: string;
+  reward_title?: string;
+  cooldown?: number;
+  enabled: boolean;
+}
+
+export interface ChatRedeemConfig {
+  enabled: boolean;
+  channel: string;
+  announcer: string;
+  commands: ChatRedeemCommand[];
+}
+
+export interface ChatRedeemStatus {
+  runtime: {
+    active: boolean;
+    observer_connected: boolean;
+    announcer: string | null;
+    channel: string | null;
+    balances: Record<string, number>;
+    last_triggers: { command: string; nick: string; ok: boolean; message: string; age: number }[];
+  };
+  config: ChatRedeemConfig;
+  redeemers: { id: number; username: string; logged_in: boolean; balance: number | null }[];
 }
 
 export interface HeistConfig {
@@ -244,6 +273,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ seconds: seconds ?? null }),
     }),
+
+  // chat-redeem (viewers trigger reward redemptions by typing chat commands)
+  getChatRedeemConfig: () => req<ChatRedeemConfig>("/api/chat-redeem/config"),
+  putChatRedeemConfig: (body: Partial<Pick<ChatRedeemConfig, "enabled" | "channel" | "announcer" | "commands">>) =>
+    req<ChatRedeemConfig>("/api/chat-redeem/config", { method: "PUT", body: JSON.stringify(body) }),
+  getChatRedeemStatus: () => req<ChatRedeemStatus>("/api/chat-redeem/status"),
+  getChatRedeemRewards: (channel: string) =>
+    req<{ channelId: string; displayName: string; balance: number; rewards: Reward[] }>(
+      `/api/chat-redeem/rewards?channel=${encodeURIComponent(channel)}`
+    ),
 
   // settings
   getStreamers: () => req<{ streamers: string[]; raw: string }>("/api/settings/streamers"),

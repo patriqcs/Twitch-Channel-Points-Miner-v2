@@ -115,6 +115,13 @@ WATCH_STALL_STRIKES = int(os.environ.get("WATCH_STALL_STRIKES", "2"))
 # coordinator thread regardless of the DB setting.
 HEIST_COORDINATOR_ENABLED = _bool_env("HEIST_COORDINATOR_ENABLED", True)
 
+# ---- Chat-command redeemer ----
+# Runs a backend thread that reads the configured channel's chat and redeems a
+# mapped reward when a viewer types its command (e.g. "!flash"). Also gated by
+# the DB setting CHATREDEEM_ENABLED (toggled from the UI, which triggers the
+# on/off chat announcement); this env flag disables the whole thread regardless.
+CHATREDEEM_COORDINATOR_ENABLED = _bool_env("CHATREDEEM_COORDINATOR_ENABLED", True)
+
 
 # ---- Event retention ----
 # points_snapshot events are written every ~60s per account and would grow the

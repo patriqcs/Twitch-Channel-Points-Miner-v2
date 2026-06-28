@@ -107,6 +107,7 @@ class AccountCreate(BaseModel):
     no_proxy: bool = False
     heist_opener: bool = False
     heist_joiner: bool = False
+    chat_redeemer: bool = False
 
 
 class AccountUpdate(BaseModel):
@@ -116,6 +117,7 @@ class AccountUpdate(BaseModel):
     no_proxy: Optional[bool] = None
     heist_opener: Optional[bool] = None
     heist_joiner: Optional[bool] = None
+    chat_redeemer: Optional[bool] = None
 
 
 class AccountRead(BaseModel):
@@ -128,6 +130,7 @@ class AccountRead(BaseModel):
     no_proxy: bool = False
     heist_opener: bool = False
     heist_joiner: bool = False
+    chat_redeemer: bool = False
     created_at: datetime
     last_login_at: Optional[datetime] = None
 

@@ -46,6 +46,10 @@ class Account(SQLModel, table=True):
     # joiner accounts (typically only the main) fire "!join" to collect the loot.
     heist_opener: bool = False
     heist_joiner: bool = False
+    # Chat-redeem role: when True this account's channel points may be spent by
+    # the chat-command redeemer (a viewer typing e.g. "!flash" makes the
+    # earliest-free of these accounts WITH THE MOST points redeem that reward).
+    chat_redeemer: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     last_login_at: Optional[datetime] = None
 

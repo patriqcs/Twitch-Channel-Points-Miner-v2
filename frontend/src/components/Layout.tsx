@@ -1,5 +1,5 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { LayoutDashboard, Users, Network, Settings, ScrollText, Gift, Banknote } from "lucide-react";
+import { LayoutDashboard, Users, Network, Settings, ScrollText, Gift, Banknote, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
@@ -7,6 +7,7 @@ const nav = [
   { to: "/accounts", label: "Accounts", icon: Users },
   { to: "/proxies", label: "Proxys", icon: Network },
   { to: "/redeem", label: "Einlösen", icon: Gift },
+  { to: "/chat-redeem", label: "Chat-Einlösen", icon: MessageSquare },
   { to: "/heist", label: "Heist", icon: Banknote },
   { to: "/logs", label: "Logs", icon: ScrollText },
   { to: "/settings", label: "Einstellungen", icon: Settings },
