@@ -154,7 +154,9 @@ export default function ChatRedeem() {
     try {
       const r = await api.testChatRedeem();
       const via = r.via_proxy ? "über Proxy" : "direkt (ohne Proxy)";
-      if (r.joined && r.sent) {
+      if (r.joined && r.msg_error) {
+        setMsg(`⚠️ ${r.announcer} ist ${via} verbunden, aber Twitch hat die Nachricht ABGELEHNT: „${r.msg_error}". Dieser Account kann in #${r.channel} nicht schreiben (z. B. gebannt / Follower-/Handy-Pflicht) — nimm einen anderen Ansage-Account.`);
+      } else if (r.joined && r.sent) {
         setMsg(`✅ ${r.announcer} ist ${via} verbunden UND hat in #${r.channel} geschrieben — funktioniert!`);
       } else if (r.joined) {
         setMsg(`⚠️ ${r.announcer} ist ${via} verbunden, aber Schreiben fehlgeschlagen${r.send_error ? `: ${r.send_error}` : ""}.`);

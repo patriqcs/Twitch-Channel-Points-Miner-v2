@@ -323,7 +323,9 @@ class HeistIRC(SingleServerIRCBot):
         self._active = False
         # surfaced to callers for diagnostics when a connection never joins
         self.connect_error: "str | None" = None
-        self.notice_error: "str | None" = None
+        self.notice_error: "str | None" = None   # login/auth rejection (privnotice)
+        self.msg_error: "str | None" = None       # a SENT message was dropped (banned,
+        #                                           followers-only, verified-phone, …)
         super().__init__(
             [(IRC_SERVER, IRC_PORT, f"oauth:{token}")], username, username,
             connect_factory=_socks_connect_factory(engine_proxy),
@@ -331,6 +333,15 @@ class HeistIRC(SingleServerIRCBot):
 
     # ---- irc.bot event handlers ----
     def on_welcome(self, connection, event):
+        # Request the commands capability so Twitch tells us (via a channel
+        # NOTICE) WHY a message we send is dropped — banned, followers-only,
+        # verified-phone required, slow mode, etc. Without it those drops are
+        # completely silent. (No tags cap: that would prefix every PRIVMSG with
+        # @tags, which this irc version doesn't parse — breaking message reads.)
+        try:
+            connection.send_raw("CAP REQ :twitch.tv/commands")
+        except Exception:  # noqa: BLE001
+            pass
         connection.join(self.channel)
         # Twitch SUPPRESSES the JOIN echo in large channels, so on_join may never
         # fire even though we are registered and in the channel. Mark ourselves
@@ -360,6 +371,12 @@ class HeistIRC(SingleServerIRCBot):
         self._capture_notice(event)
 
     def on_pubnotice(self, connection, event):
+        # A NOTICE targeting the channel is feedback about a message WE sent
+        # (msg_banned, msg_followersonly, msg_requires_verified_phone_number,
+        # msg_subsonly, msg_slowmode …). Record the reason so the UI can show it.
+        text = event.arguments[0] if event.arguments else ""
+        if text:
+            self.msg_error = text
         self._capture_notice(event)
 
     def on_pubmsg(self, connection, event):

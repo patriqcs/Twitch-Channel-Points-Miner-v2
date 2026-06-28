@@ -138,7 +138,13 @@ class ChatRedeemManager(threading.Thread):
             self._last_balance_refresh = 0.0   # force an immediate first refresh
             logger.info("chat-redeem ON announced in #%s as %s",
                         cfg["channel"], cfg["announcer"])
-        self._set_reason("aktiv")
+        if obs.msg_error:
+            # connected & active, but Twitch is dropping our posts (announcer
+            # banned / followers-only / verified-phone required …)
+            self._set_reason(f"aktiv, aber Twitch lehnt Chat-Nachrichten ab: "
+                             f"{obs.msg_error} — anderen Ansage-Account nutzen")
+        else:
+            self._set_reason("aktiv")
         self._maybe_refresh_balances(cfg)
 
     def _set_reason(self, reason: str):

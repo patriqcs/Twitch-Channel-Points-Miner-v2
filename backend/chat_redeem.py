@@ -205,5 +205,6 @@ def probe_announcer(channel: str, rec: dict, message: "str | None" = None,
         "sent": sent,
         "connect_error": client.connect_error,
         "notice_error": client.notice_error,
+        "msg_error": client.msg_error,   # Twitch rejected the posted message
         "send_error": send_error,
     }
