@@ -113,7 +113,10 @@ class WebSocketsPool:
             # Keep-alive ping cadence. A direct connection is happy with a ping
             # every ~25-30s, but through a proxy (esp. Mullvad SOCKS5 relays) a
             # mostly-idle connection gets reaped within seconds when the relay /
-            # path is congested, so ping much more often to keep it warm.
+            # path is congested. Measured: a ping every ~8-25s still dies in
+            # 5-22s, but a ping every ~2s keeps the connection alive indefinitely
+            # (Twitch ponged 42/42 over 90s). So through a proxy we ping ~every
+            # 2s to keep traffic flowing both ways and stay below the reaper.
             proxied = getattr(Settings, "proxy", None) is not None
             while ws.is_closed is False:
                 # Else: the ws is currently in reconnecting phase, you can't do ping or other operation.
@@ -121,7 +124,7 @@ class WebSocketsPool:
                 if ws.is_reconnecting is False:
                     ws.ping()  # We need ping for keep the connection alive
                     time.sleep(
-                        random.uniform(8, 12) if proxied
+                        random.uniform(1.5, 2.5) if proxied
                         else random.uniform(25, 30)
                     )
 
