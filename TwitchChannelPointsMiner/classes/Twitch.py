@@ -67,6 +67,7 @@ class Twitch(object):
         "client_version",
         "twilight_build_id_pattern",
         "proxies",
+        "session",
     ]
 
     def __init__(self, username, user_agent, password=None, proxy=None):
