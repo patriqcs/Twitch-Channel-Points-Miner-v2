@@ -290,6 +290,13 @@ def configure_loggers(username, settings):
     # Send log messages to another thread through the queue
     root_logger.addHandler(queue_handler)
 
+    # urllib3 logs a WARNING for every individual retry ("Retrying (Retry(...))
+    # after connection broken ..."). With the retry-enabled session those are
+    # expected, self-healing blips of the flaky proxy and would flood the log.
+    # Mute them to ERROR so only genuinely exhausted retries surface (those are
+    # already caught and logged by the miner as proper errors).
+    logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
+
     # Adding a username to the format based on settings
     console_username = "" if settings.console_username is False else f"[{username}] "
 
