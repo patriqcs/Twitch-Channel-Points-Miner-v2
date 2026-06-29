@@ -24,13 +24,17 @@ logger = logging.getLogger(__name__)
 
 
 class WebSocketsPool:
-    __slots__ = ["ws", "twitch", "streamers", "events_predictions"]
+    __slots__ = ["ws", "twitch", "streamers", "events_predictions",
+                 "reconnect_attempts"]
 
     def __init__(self, twitch, streamers, events_predictions):
         self.ws = []
         self.twitch = twitch
         self.streamers = streamers
         self.events_predictions = events_predictions
+        # per-connection-index count of consecutive failed (re)connects, used
+        # for exponential reconnect backoff. Reset to 0 once a connection opens.
+        self.reconnect_attempts = {}
 
     """
     API Limits
@@ -99,17 +103,27 @@ class WebSocketsPool:
     def on_open(ws):
         def run():
             ws.is_opened = True
+            # Connected OK -> reset the reconnect backoff for this index.
+            ws.parent_pool.reconnect_attempts[ws.index] = 0
             ws.ping()
 
             for topic in ws.pending_topics:
                 ws.listen(topic, ws.twitch.twitch_login.get_auth_token())
 
+            # Keep-alive ping cadence. A direct connection is happy with a ping
+            # every ~25-30s, but through a proxy (esp. Mullvad SOCKS5 relays) a
+            # mostly-idle connection gets reaped within seconds when the relay /
+            # path is congested, so ping much more often to keep it warm.
+            proxied = getattr(Settings, "proxy", None) is not None
             while ws.is_closed is False:
                 # Else: the ws is currently in reconnecting phase, you can't do ping or other operation.
                 # Probably this ws will be closed very soon with ws.is_closed = True
                 if ws.is_reconnecting is False:
                     ws.ping()  # We need ping for keep the connection alive
-                    time.sleep(random.uniform(25, 30))
+                    time.sleep(
+                        random.uniform(8, 12) if proxied
+                        else random.uniform(25, 30)
+                    )
 
                     if ws.elapsed_last_pong() > 5:
                         logger.info(
@@ -147,10 +161,18 @@ class WebSocketsPool:
             ws.is_reconnecting = True
 
             if ws.forced_close is False:
+                self = ws.parent_pool
+                # Exponential backoff: a brief proxy blip recovers in ~1s instead
+                # of the old fixed 60s, while a proxy that can't connect at all
+                # backs off up to 60s so we don't hot-loop. The counter is reset
+                # to 0 in on_open() once a connection actually opens.
+                n = self.reconnect_attempts.get(ws.index, 0)
+                self.reconnect_attempts[ws.index] = n + 1
+                delay = min(2 ** n, 60)  # 1, 2, 4, 8, 16, 32, 60, 60, ...
                 logger.info(
-                    f"#{ws.index} - Reconnecting to Twitch PubSub server in ~60 seconds"
+                    f"#{ws.index} - Reconnecting to Twitch PubSub server in ~{delay}s"
                 )
-                time.sleep(30)
+                time.sleep(delay)
 
                 while internet_connection_available() is False:
                     random_sleep = random.randint(1, 3)
@@ -160,12 +182,14 @@ class WebSocketsPool:
                     time.sleep(random_sleep * 60)
 
                 # Why not create a new ws on the same array index? Let's try.
-                self = ws.parent_pool
                 # Create a new connection.
                 self.ws[ws.index] = self.__new(ws.index)
 
                 self.__start(ws.index)  # Start a new thread.
-                time.sleep(30)
+                # The new ws may not be open yet; __submit() queues topics into
+                # pending_topics and on_open() sends them, so a short settle is
+                # enough — no need for the old fixed 30s wait.
+                time.sleep(1)
 
                 for topic in ws.topics:
                     self.__submit(ws.index, topic)
