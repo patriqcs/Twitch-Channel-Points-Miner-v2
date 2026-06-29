@@ -12,6 +12,8 @@ import re
 import string
 import time
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import validators
 # import json
 
@@ -74,6 +76,22 @@ class Twitch(object):
         self.user_agent = user_agent
         # dict for the requests `proxies=` argument, or None when no proxy is set.
         self.proxies = proxy.requests_proxies if proxy is not None else None
+        # Shared HTTP session with automatic retry/backoff. The per-account
+        # proxy (Mullvad SOCKS5) intermittently refuses NEW connections
+        # ("Connection closed unexpectedly") in short bursts; without retries a
+        # single blip fails the request (minute-watched / gql / spade) outright
+        # and can cascade (e.g. a failed spade fetch -> spade_url stays None).
+        # Retry transient connect/read errors a few times with backoff so a
+        # momentary blip self-heals instead of surfacing as an ERROR.
+        self.session = requests.Session()
+        _retry = Retry(
+            total=4, connect=4, read=2, backoff_factor=0.6,
+            status_forcelist=(500, 502, 503, 504), allowed_methods=None,
+            raise_on_status=False,
+        )
+        _adapter = HTTPAdapter(max_retries=_retry)
+        self.session.mount("http://", _adapter)
+        self.session.mount("https://", _adapter)
         self.device_id = "".join(
             choice(string.ascii_letters + string.digits) for _ in range(32)
         )
@@ -144,14 +162,14 @@ class Twitch(object):
 
             headers = {"User-Agent": USER_AGENTS["Linux"]["FIREFOX"]}
 
-            main_page_request = requests.get(
+            main_page_request = self.session.get(
                 streamer.streamer_url, headers=headers, proxies=self.proxies)
             response = main_page_request.text
             # logger.info(response)
             regex_settings = "(https://static.twitchcdn.net/config/settings.*?js|https://assets.twitch.tv/config/settings.*?.js)"
             settings_url = re.search(regex_settings, response).group(1)
 
-            settings_request = requests.get(settings_url, headers=headers, proxies=self.proxies)
+            settings_request = self.session.get(settings_url, headers=headers, proxies=self.proxies)
             response = settings_request.text
             regex_spade = '"spade_url":"(.*?)"'
             streamer.stream.spade_url = re.search(
@@ -279,7 +297,7 @@ class Twitch(object):
 
     def post_gql_request(self, json_data):
         try:
-            response = requests.post(
+            response = self.session.post(
                 GQLOperations.url,
                 json=json_data,
                 headers={
@@ -361,7 +379,7 @@ class Twitch(object):
 
     def update_client_version(self):
         try:
-            response = requests.get(URL, proxies=self.proxies)
+            response = self.session.get(URL, proxies=self.proxies)
             if response.status_code != 200:
                 logger.debug(
                     f"Error with update_client_version: {response.status_code}"
@@ -535,7 +553,7 @@ class Twitch(object):
                         RequestBroadcastQualitiesURL = f"https://usher.ttvnw.net/api/channel/hls/{streamers[index].username}.m3u8?sig={signature}&token={value}"
 
                         # Get list of video qualities
-                        responseBroadcastQualities = requests.get(
+                        responseBroadcastQualities = self.session.get(
                             RequestBroadcastQualitiesURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
@@ -555,7 +573,7 @@ class Twitch(object):
                             continue
 
                         # Get list of video URLs
-                        responseStreamURLList = requests.get(
+                        responseStreamURLList = self.session.get(
                             BroadcastLowestQualityURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
@@ -574,7 +592,7 @@ class Twitch(object):
                             continue
 
                         # Perform a HEAD request to simulate watching the stream
-                        responseStreamLowestQualityURL = requests.head(
+                        responseStreamLowestQualityURL = self.session.head(
                             StreamLowestQualityURL,
                             headers={"User-Agent": self.user_agent},
                             timeout=20,
@@ -587,7 +605,15 @@ class Twitch(object):
                             continue
                         # End of fix for 2024/5 API Change
                         ##################################
-                        response = requests.post(
+                        # spade_url can be None if an earlier get_spade_url()
+                        # failed (e.g. a proxy blip). Posting to None raises
+                        # MissingSchema and kills this watch cycle, so refetch
+                        # it once and skip this streamer if still unavailable.
+                        if not streamers[index].stream.spade_url:
+                            self.get_spade_url(streamers[index])
+                            if not streamers[index].stream.spade_url:
+                                continue
+                        response = self.session.post(
                             streamers[index].stream.spade_url,
                             data=streamers[index].stream.encode_payload(),
                             headers={"User-Agent": self.user_agent},
