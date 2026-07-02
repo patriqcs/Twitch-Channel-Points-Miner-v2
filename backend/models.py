@@ -97,6 +97,9 @@ class WebUser(SQLModel, table=True):
     password_hash: str
     # set by an admin password reset: the website forces a new password on login
     must_change_password: bool = False
+    # self-registered accounts start unapproved and cannot log in until an
+    # admin approves them in the manager UI; admin-created accounts start True
+    approved: bool = True
     created_at: datetime = Field(default_factory=utcnow)
     last_seen_at: Optional[datetime] = None
 

@@ -185,6 +185,19 @@ input:focus { outline: none; border-color: var(--purple); box-shadow: 0 0 0 3px 
   font-size: 0.85rem;
 }
 
+.form-success {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(47, 212, 143, 0.12);
+  border: 1px solid rgba(47, 212, 143, 0.4);
+  color: var(--green);
+  font-size: 0.85rem;
+}
+
+.text-link { color: var(--purple); text-decoration: none; }
+.text-link:hover { text-decoration: underline; }
+
 /* rewards grid */
 .cards {
   display: grid;

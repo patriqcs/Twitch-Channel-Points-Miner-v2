@@ -9,6 +9,7 @@
     catalog: null,
     countdowns: {},        // reward_id -> epoch-ms when free again
     forcedChange: false,
+    showRegister: false,
     pollTimer: null,
   };
 
@@ -81,7 +82,8 @@
 
     var offline = cat && !cat.enabled;
     show("view-offline", !!offline);
-    show("view-login", !offline && !loggedIn);
+    show("view-login", !offline && !loggedIn && !state.showRegister);
+    show("view-register", !offline && !loggedIn && state.showRegister);
     show("view-rewards", !offline && loggedIn);
     show("user-box", loggedIn);
 
@@ -247,6 +249,51 @@
       setSession(res.token, res.username);
       $("login-pass").value = "";
       loadCatalog();
+    }).catch(function (e) {
+      errBox.textContent = e.message;
+      errBox.classList.remove("hidden");
+    });
+  });
+
+  // ---------- registration ----------
+  $("show-register").addEventListener("click", function (ev) {
+    ev.preventDefault();
+    state.showRegister = true;
+    $("reg-error").classList.add("hidden");
+    $("reg-success").classList.add("hidden");
+    render();
+  });
+  $("show-login").addEventListener("click", function (ev) {
+    ev.preventDefault();
+    state.showRegister = false;
+    render();
+  });
+  $("register-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var errBox = $("reg-error");
+    var okBox = $("reg-success");
+    errBox.classList.add("hidden");
+    okBox.classList.add("hidden");
+    if ($("reg-pass").value !== $("reg-pass2").value) {
+      errBox.textContent = "Die Passwörter stimmen nicht überein.";
+      errBox.classList.remove("hidden");
+      return;
+    }
+    api("/api/register", {
+      method: "POST",
+      body: { username: $("reg-user").value.trim(), password: $("reg-pass").value },
+    }).then(function (res) {
+      if (!res.ok) {
+        errBox.textContent = res.message || "Anfrage fehlgeschlagen.";
+        errBox.classList.remove("hidden");
+        return;
+      }
+      okBox.textContent = res.message || "Anfrage gesendet!";
+      okBox.classList.remove("hidden");
+      // convenience: pre-fill the login form for after the approval
+      $("login-user").value = $("reg-user").value.trim();
+      $("reg-pass").value = "";
+      $("reg-pass2").value = "";
     }).catch(function (e) {
       errBox.textContent = e.message;
       errBox.classList.remove("hidden");

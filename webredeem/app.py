@@ -80,6 +80,7 @@ class RateLimiter:
 # generous for reads, tight for writes; redeem also has a short per-IP spacing
 catalog_limit = RateLimiter(limit=60, window=60.0)
 login_limit = RateLimiter(limit=10, window=60.0)
+register_limit = RateLimiter(limit=3, window=3600.0)   # 3 Anfragen/Stunde/IP
 redeem_limit = RateLimiter(limit=10, window=60.0)
 redeem_spacing = RateLimiter(limit=1, window=2.0)
 redeem_global = RateLimiter(limit=60, window=60.0)
@@ -140,6 +141,18 @@ async def login(request: Request):
         raise HTTPException(429, "Zu viele Login-Versuche — kurz warten.")
     body = await request.json()
     return await _forward(request, "POST", "/api/public-redeem/auth/login", {
+        "username": str(body.get("username", ""))[:64],
+        "password": str(body.get("password", ""))[:128],
+    })
+
+
+@app.post("/api/register")
+async def register(request: Request):
+    ip = client_ip(request)
+    if not login_limit.allow(ip) or not register_limit.allow(ip):
+        raise HTTPException(429, "Zu viele Anfragen — bitte später nochmal.")
+    body = await request.json()
+    return await _forward(request, "POST", "/api/public-redeem/auth/register", {
         "username": str(body.get("username", ""))[:64],
         "password": str(body.get("password", ""))[:128],
     })

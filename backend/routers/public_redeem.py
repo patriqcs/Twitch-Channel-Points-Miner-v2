@@ -11,6 +11,7 @@ manager UI) — the session token travels in the X-Session header. The reward
 catalogue and the trigger are only served to a logged-in user, so the public
 page shows nothing but branding + login until then.
 
+  POST /api/public-redeem/auth/register         -> account request (needs approval)
   POST /api/public-redeem/auth/login            -> session token
   POST /api/public-redeem/auth/logout
   POST /api/public-redeem/auth/change-password
@@ -45,7 +46,45 @@ def _session_user(session: Session, token: str) -> "WebUser | None":
     return session.get(WebUser, user_id)
 
 
+# Flood guard: at most this many unapproved requests may sit in the queue; new
+# registrations are rejected beyond it (an attacker can then no longer grow the
+# table, and real users get a clear "try later" message).
+MAX_PENDING = 50
+
+
 # ------------------------------------------------------------------ auth
+class RegisterIn(BaseModel):
+    username: str
+    password: str
+
+
+@router.post("/auth/register", dependencies=[Depends(require_token)])
+def register(body: RegisterIn, session: Session = Depends(get_session)):
+    username = (body.username or "").strip()
+    if not web_users.valid_username(username):
+        return {"ok": False,
+                "message": "Benutzername: 3-24 Zeichen, nur a-z, 0-9, _ . -"}
+    problem = web_users.password_problem(body.password or "")
+    if problem:
+        return {"ok": False, "message": problem}
+    from sqlalchemy import func
+    if session.exec(select(WebUser).where(
+            func.lower(WebUser.username) == username.lower())).first():
+        return {"ok": False, "message": "Benutzername ist schon vergeben."}
+    pending = len(session.exec(select(WebUser).where(
+        WebUser.approved == False)).all())  # noqa: E712
+    if pending >= MAX_PENDING:
+        return {"ok": False, "message": "Gerade zu viele offene Anfragen — "
+                                        "bitte später nochmal versuchen."}
+    session.add(WebUser(username=username,
+                        password_hash=web_users.hash_password(body.password),
+                        approved=False))
+    session.commit()
+    return {"ok": True,
+            "message": "Anfrage gesendet! Dein Konto muss noch freigeschaltet "
+                       "werden — versuch es später mit dem Login."}
+
+
 class LoginIn(BaseModel):
     username: str
     password: str
@@ -65,6 +104,12 @@ def login(body: LoginIn, session: Session = Depends(get_session)):
                                                      user.password_hash):
         web_users.login_throttle.note_failure(username)
         return {"ok": False, "message": "Benutzername oder Passwort falsch."}
+    if not user.approved:
+        # correct password, but the request has not been approved yet
+        web_users.login_throttle.note_success(username)
+        return {"ok": False,
+                "message": "Dein Konto wurde noch nicht freigeschaltet — "
+                           "bitte etwas Geduld."}
     web_users.login_throttle.note_success(username)
     user.last_seen_at = datetime.now(timezone.utc)
     session.add(user)

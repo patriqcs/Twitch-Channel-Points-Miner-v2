@@ -57,7 +57,33 @@
         </label>
         <div id="login-error" class="form-error hidden"></div>
         <button class="btn btn-primary btn-block" type="submit">Einloggen</button>
-        <p class="muted small">Kein Konto? Frag im Stream nach einem Zugang.</p>
+        <p class="muted small">Kein Konto?
+          <a id="show-register" class="text-link" href="#">Konto erstellen</a>
+        </p>
+      </form>
+    </section>
+
+    <!-- Registration -->
+    <section id="view-register" class="login-wrap hidden">
+      <form id="register-form" class="card login-card" autocomplete="on">
+        <h2>Konto erstellen</h2>
+        <p class="muted">Wunsch-Benutzername und Passwort wählen. Dein Konto wird
+          danach vom Streamer-Team freigeschaltet — erst dann kannst du dich einloggen.</p>
+        <label>Benutzername <span class="muted small">(3-24 Zeichen: a-z, 0-9, _ . -)</span>
+          <input id="reg-user" name="username" autocomplete="username" required maxlength="24">
+        </label>
+        <label>Passwort <span class="muted small">(min. 8 Zeichen)</span>
+          <input id="reg-pass" name="new-password" type="password" autocomplete="new-password" required minlength="8" maxlength="128">
+        </label>
+        <label>Passwort wiederholen
+          <input id="reg-pass2" type="password" autocomplete="new-password" required minlength="8" maxlength="128">
+        </label>
+        <div id="reg-error" class="form-error hidden"></div>
+        <div id="reg-success" class="form-success hidden"></div>
+        <button class="btn btn-primary btn-block" type="submit">Anfrage senden</button>
+        <p class="muted small">Schon ein Konto?
+          <a id="show-login" class="text-link" href="#">Zurück zum Login</a>
+        </p>
       </form>
     </section>
 

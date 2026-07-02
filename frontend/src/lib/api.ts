@@ -72,6 +72,7 @@ export interface WebUserRow {
   id: number;
   username: string;
   must_change_password: boolean;
+  approved: boolean;
   created_at: string;
   last_seen_at: string | null;
   generated_password?: string;
@@ -370,6 +371,8 @@ export const api = {
   listWebUsers: () => req<WebUserRow[]>("/api/web-redeem/users"),
   createWebUser: (body: { username: string; password?: string }) =>
     req<WebUserRow>("/api/web-redeem/users", { method: "POST", body: JSON.stringify(body) }),
+  approveWebUser: (id: number) =>
+    req<WebUserRow>(`/api/web-redeem/users/${id}/approve`, { method: "POST" }),
   resetWebUser: (id: number, password?: string) =>
     req<WebUserRow>(`/api/web-redeem/users/${id}/reset`, {
       method: "POST", body: JSON.stringify({ password: password ?? null }),

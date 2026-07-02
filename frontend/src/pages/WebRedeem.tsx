@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, ExternalLink, Globe, KeyRound, Loader2, Play, Plus, Square, Trash2, UserPlus } from "lucide-react";
+import { Check, Copy, ExternalLink, Globe, KeyRound, Loader2, Play, Plus, Square, Trash2, UserPlus } from "lucide-react";
 import { api, type Reward, type WebRedeemItem } from "@/lib/api";
 import { Button, Card, Input, Textarea } from "@/components/ui";
 
@@ -38,7 +38,11 @@ export default function WebRedeem() {
     refetchInterval: 4000,
   });
 
-  const { data: webUsers = [] } = useQuery({ queryKey: ["web-users"], queryFn: api.listWebUsers });
+  const { data: webUsers = [] } = useQuery({
+    queryKey: ["web-users"],
+    queryFn: api.listWebUsers,
+    refetchInterval: 10000,   // neue Konto-Anfragen automatisch anzeigen
+  });
 
   const [channel, setChannel] = useState("");
   const [enabled, setEnabled] = useState(false);
@@ -187,6 +191,16 @@ export default function WebRedeem() {
       setMsg(`❌ ${(e as Error).message}`);
     } finally {
       setCreatingUser(false);
+    }
+  };
+
+  const approveUser = async (id: number, username: string) => {
+    try {
+      await api.approveWebUser(id);
+      qc.invalidateQueries({ queryKey: ["web-users"] });
+      setMsg(`✅ „${username}" freigeschaltet – kann sich jetzt einloggen`);
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`);
     }
   };
 
@@ -461,12 +475,20 @@ export default function WebRedeem() {
 
       {/* Website login users */}
       <Card className="space-y-3">
-        <div className="text-sm font-semibold">Webseiten-Benutzer (Login für die öffentliche Seite)</div>
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          Webseiten-Benutzer (Login für die öffentliche Seite)
+          {webUsers.some((u) => !u.approved) && (
+            <span className="rounded-full border border-brand/40 bg-brand/15 px-2 py-0.5 text-[10px] font-normal text-brand">
+              {webUsers.filter((u) => !u.approved).length} Anfrage(n) offen
+            </span>
+          )}
+        </div>
         <div className="text-[11px] text-zinc-500">
           Nur mit so einem Benutzer kann man sich auf der Webseite einloggen und einlösen.
-          Ohne Passwort-Eingabe wird eins generiert und einmalig angezeigt; der Benutzer muss
-          es beim ersten Login ändern. „Reset" erzeugt ein neues Einmal-Passwort und meldet
-          den Benutzer überall ab.
+          Besucher können über „Konto erstellen" eine Anfrage stellen — sie erscheint hier
+          und muss mit ✓ freigeschaltet werden. Ohne Passwort-Eingabe wird beim Anlegen eins
+          generiert und einmalig angezeigt; der Benutzer muss es beim ersten Login ändern.
+          „Reset" erzeugt ein neues Einmal-Passwort und meldet den Benutzer überall ab.
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <div className="w-40">
@@ -486,11 +508,17 @@ export default function WebRedeem() {
           </Button>
         </div>
         <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-          {webUsers.map((u) => (
-            <div key={u.id} className="flex items-center justify-between gap-2 rounded-md border border-zinc-800 px-3 py-1.5 text-sm">
+          {[...webUsers].sort((a, b) => Number(a.approved) - Number(b.approved)).map((u) => (
+            <div key={u.id}
+              className={`flex items-center justify-between gap-2 rounded-md border px-3 py-1.5 text-sm ${u.approved ? "border-zinc-800" : "border-brand/40 bg-brand/5"}`}>
               <span className="flex items-center gap-2">
                 {u.username}
-                {u.must_change_password && (
+                {!u.approved && (
+                  <span className="rounded-full border border-brand/40 bg-brand/15 px-2 py-0.5 text-[10px] text-brand">
+                    wartet auf Freischaltung
+                  </span>
+                )}
+                {u.approved && u.must_change_password && (
                   <span className="rounded-full border border-amber-500/30 bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-400">
                     muss Passwort ändern
                   </span>
@@ -500,11 +528,17 @@ export default function WebRedeem() {
                 <span className="mr-1 text-[10px] text-zinc-600">
                   {u.last_seen_at ? `zuletzt ${new Date(u.last_seen_at).toLocaleString()}` : "noch nie eingeloggt"}
                 </span>
+                {!u.approved && (
+                  <Button size="sm" variant="success" title="Anfrage freischalten"
+                    onClick={() => approveUser(u.id, u.username)}>
+                    <Check size={14} /> Freischalten
+                  </Button>
+                )}
                 <Button size="sm" variant="ghost" title="Passwort zurücksetzen"
                   onClick={() => resetUser(u.id, u.username)}>
                   <KeyRound size={14} />
                 </Button>
-                <Button size="sm" variant="ghost" title="Benutzer löschen"
+                <Button size="sm" variant="ghost" title={u.approved ? "Benutzer löschen" : "Anfrage ablehnen"}
                   onClick={() => deleteUser(u.id, u.username)}>
                   <Trash2 size={14} />
                 </Button>

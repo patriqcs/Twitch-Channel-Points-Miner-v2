@@ -119,6 +119,7 @@ def get_token():
 def _user_read(u: WebUser) -> dict:
     return {"id": u.id, "username": u.username,
             "must_change_password": u.must_change_password,
+            "approved": u.approved,
             "created_at": u.created_at, "last_seen_at": u.last_seen_at}
 
 
@@ -160,6 +161,18 @@ def create_user(body: WebUserCreate, session: Session = Depends(get_session)):
     if body.password is None:
         out["generated_password"] = password
     return out
+
+
+@router.post("/users/{user_id}/approve")
+def approve_user(user_id: int, session: Session = Depends(get_session)):
+    """Approve a self-registered account request (it can log in afterwards)."""
+    user = session.get(WebUser, user_id)
+    if user is None:
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    user.approved = True
+    session.add(user)
+    session.commit()
+    return _user_read(user)
 
 
 @router.post("/users/{user_id}/reset")

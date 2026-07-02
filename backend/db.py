@@ -51,6 +51,10 @@ def _ensure_columns() -> None:
             "chat_redeemer": "BOOLEAN NOT NULL DEFAULT 0",
             "web_redeemer": "BOOLEAN NOT NULL DEFAULT 0",
         },
+        # existing website users predate self-registration -> keep them approved
+        "webuser": {
+            "approved": "BOOLEAN NOT NULL DEFAULT 1",
+        },
     }
     with engine.begin() as conn:
         for table, columns in wanted.items():
