@@ -9,7 +9,7 @@ from backend.login_service import login_service
 from backend.manager import manager
 from backend.models import Account, Event, Proxy
 from backend.proxy_util import to_engine_proxy
-from backend.schemas import AccountCreate, AccountRead, AccountUpdate
+from backend.schemas import AccountCreate, AccountRead, AccountRename, AccountUpdate
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
@@ -114,6 +114,53 @@ def update_account(account_id: int, payload: AccountUpdate,
     session.add(acc)
     session.commit()
     session.refresh(acc)
+    return _to_read(acc)
+
+
+@router.post("/{account_id}/rename", response_model=AccountRead)
+def rename_account(account_id: int, payload: AccountRename,
+                   session: Session = Depends(get_session)):
+    """Rename an account AFTER the name was changed on twitch.tv.
+
+    The stored auth-token is bound to the Twitch user-id, so no re-login is
+    needed — but everything on disk (cookie, logs) and the miner process are
+    keyed by username, so they must move together with the DB row.
+    """
+    new = payload.username.strip().lower()
+    acc = _get(session, account_id)
+    old = acc.username
+    if not new:
+        raise HTTPException(422, "username must not be empty")
+    if new == old:
+        return _to_read(acc)
+    if session.exec(select(Account).where(Account.username == new)).first():
+        raise HTTPException(409, "username already exists")
+
+    was_running = manager.is_running(old)
+    manager.stop(old)
+
+    old_cookie = config.COOKIES_DIR / f"{old}.pkl"
+    new_cookie = config.COOKIES_DIR / f"{new}.pkl"
+    if old_cookie.exists():
+        old_cookie.replace(new_cookie)
+    # Keep the log history readable under the new name (best-effort).
+    for suffix in (".log", ".log.1"):
+        old_log = config.LOGS_DIR / f"{old}{suffix}"
+        if old_log.exists():
+            try:
+                old_log.replace(config.LOGS_DIR / f"{new}{suffix}")
+            except OSError:
+                pass
+
+    acc.username = new
+    session.add(acc)
+    session.add(Event(account_id=acc.id, type="status", reason="renamed",
+                      message=f"renamed {old} -> {new}"))
+    session.commit()
+    session.refresh(acc)
+
+    if was_running:
+        manager.start(new)
     return _to_read(acc)
 
 

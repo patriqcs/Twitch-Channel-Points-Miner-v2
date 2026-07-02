@@ -226,6 +226,11 @@ export const api = {
     req<Account>("/api/accounts", { method: "POST", body: JSON.stringify(b) }),
   updateAccount: (id: number, b: Record<string, unknown>) =>
     req<Account>(`/api/accounts/${id}`, { method: "PATCH", body: JSON.stringify(b) }),
+  renameAccount: (id: number, username: string) =>
+    req<Account>(`/api/accounts/${id}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ username }),
+    }),
   deleteAccount: (id: number) =>
     req<void>(`/api/accounts/${id}`, { method: "DELETE" }),
   startAccount: (id: number) =>

@@ -111,6 +111,10 @@ class AccountCreate(BaseModel):
     web_redeemer: bool = False
 
 
+class AccountRename(BaseModel):
+    username: str
+
+
 class AccountUpdate(BaseModel):
     password: Optional[str] = None
     proxy_id: Optional[int] = None

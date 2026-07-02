@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Play, Square, RotateCw, Trash2, LogIn, Plus, KeyRound, Cookie, Copy } from "lucide-react";
+import { Play, Square, RotateCw, Trash2, LogIn, Plus, KeyRound, Cookie, Copy, Pencil, HelpCircle } from "lucide-react";
 import { api, type Account, type LoginStart } from "@/lib/api";
 import { Button, Card, Input, Modal, StatusBadge } from "@/components/ui";
 import { fmtTime } from "@/lib/utils";
@@ -18,6 +18,7 @@ export default function Accounts() {
   const [newNoProxy, setNewNoProxy] = useState(false);
   const [login, setLogin] = useState<{ account: Account; data: LoginStart } | null>(null);
   const [token, setToken] = useState<{ username: string; value: string | null; error: string | null } | null>(null);
+  const [rename, setRename] = useState<{ account: Account; value: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   const create = useMutation({
@@ -169,6 +170,10 @@ export default function Accounts() {
                 }}>
                 <KeyRound size={14} />
               </Button>
+              <Button size="sm" variant="ghost" title="Umbenennen (nach Namensänderung auf Twitch)"
+                onClick={() => setRename({ account: a, value: a.username })}>
+                <Pencil size={14} />
+              </Button>
               <Button size="sm" variant="ghost" title="auth-token anzeigen"
                 onClick={async () => {
                   try {
@@ -230,6 +235,54 @@ export default function Accounts() {
           </Button>
         </div>
       </Modal>
+
+      {rename && (
+        <Modal open onClose={() => setRename(null)} title={`Umbenennen: ${rename.account.username}`}>
+          <div className="space-y-3">
+            <label className="flex items-center gap-1.5 text-sm text-zinc-300">
+              Neuer Twitch-Name
+              <span
+                className="cursor-help text-zinc-500"
+                title={
+                  "Nur nötig, wenn der Name auf Twitch geändert wurde.\n\n" +
+                  "1. Zuerst auf twitch.tv umbenennen (Einstellungen → Profil → Benutzername; Twitch erlaubt das nur alle 60 Tage).\n" +
+                  "2. Dann hier den neuen Namen eintragen.\n\n" +
+                  "Der Miner wird gestoppt, Cookie- und Log-Dateien werden auf den neuen Namen umgezogen und der Miner (falls er lief) neu gestartet. " +
+                  "Der Login bleibt gültig — der auth-token hängt an der User-ID, nicht am Namen. Kein neuer Device-Code-Login nötig."
+                }
+              >
+                <HelpCircle size={15} />
+              </span>
+            </label>
+            <Input
+              placeholder="neuer_name"
+              value={rename.value}
+              onChange={(e) => setRename({ ...rename, value: e.target.value })}
+            />
+            <p className="text-xs text-zinc-500">
+              Voraussetzung: Der Name wurde bereits auf twitch.tv geändert (Hover über das ? für Details).
+            </p>
+            <Button
+              className="w-full"
+              disabled={
+                !rename.value.trim() ||
+                rename.value.trim().toLowerCase() === rename.account.username
+              }
+              onClick={async () => {
+                try {
+                  await api.renameAccount(rename.account.id, rename.value.trim());
+                  setRename(null);
+                  invalidate();
+                } catch (er) {
+                  setErr((er as Error).message);
+                }
+              }}
+            >
+              Umbenennen
+            </Button>
+          </div>
+        </Modal>
+      )}
 
       {login && <LoginModal info={login} onClose={() => { setLogin(null); invalidate(); }} />}
 
