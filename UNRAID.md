@@ -4,7 +4,7 @@ Fertiges Image in deiner GitHub Container Registry (privat – deine Unraid-Dock
 ist als `patriqcs` eingeloggt und kann es ziehen):
 
 ```
-ghcr.io/patriqcs/twitch-miner-multi:latest
+ghcr.io/patriqcs/twitch-channel-points-miner-v2:latest
 ```
 
 Du brauchst **nur einen Container**. Über die Variable `ACCOUNTS` startet er pro
@@ -17,7 +17,7 @@ Unraid → **Docker** → **Add Container** → *Advanced View*:
 | Feld | Wert |
 |---|---|
 | **Name** | `twitch-miner` |
-| **Repository** | `ghcr.io/patriqcs/twitch-miner-multi:latest` |
+| **Repository** | `ghcr.io/patriqcs/twitch-channel-points-miner-v2:latest` |
 | **Variable** | Key `ACCOUNTS` → Value `acc01,acc02,acc03,acc04,acc05,acc06,acc07,acc08,acc09,acc10` |
 | **Variable** | Key `STREAMERS` → Value `streamer1,streamer2,streamer3` |
 | **Variable** *(optional)* | Key `TZ` → Value `Europe/Berlin` |
