@@ -15,6 +15,7 @@ Environment:
   TRUST_PROXY        1 = use X-Forwarded-For for the client IP (default 1;
                      correct behind Cloudflare Tunnel / a reverse proxy)
 """
+import hashlib
 import logging
 import os
 import threading
@@ -24,7 +25,7 @@ from pathlib import Path
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -194,14 +195,41 @@ async def redeem(request: Request):
 
 
 # Static page (after the API routes so /api/* wins).
+#
+# Cache busting: Cloudflare edge-caches .css/.js for hours by default, so a
+# deploy would otherwise keep serving the OLD JavaScript to a fresh HTML page.
+# The asset URLs therefore carry a content-hash query ({{V}} in index.html);
+# a new build changes the hash -> new URL -> guaranteed edge/browser miss. The
+# HTML itself is served with no-cache so the new URLs reach clients right away.
+def _asset_version() -> str:
+    h = hashlib.md5()
+    for f in sorted((STATIC_DIR / "assets").iterdir()):
+        h.update(f.read_bytes())
+    return h.hexdigest()[:10]
+
+
+INDEX_HTML = (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace(
+    "{{V}}", _asset_version())
+
 app.mount("/assets", StaticFiles(directory=STATIC_DIR / "assets"), name="assets")
+
+
+@app.middleware("http")
+async def cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/assets/"):
+        # versioned URLs may be cached forever; a deploy mints new URLs
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 
 @app.get("/{full_path:path}")
 async def index(full_path: str):
     if full_path.startswith("api/"):
         raise HTTPException(404)
-    return FileResponse(STATIC_DIR / "index.html")
+    return HTMLResponse(INDEX_HTML)
 
 
 if __name__ == "__main__":
