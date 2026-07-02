@@ -49,6 +49,7 @@ def _ensure_columns() -> None:
             "heist_joiner": "BOOLEAN NOT NULL DEFAULT 0",
             "no_proxy": "BOOLEAN NOT NULL DEFAULT 0",
             "chat_redeemer": "BOOLEAN NOT NULL DEFAULT 0",
+            "web_redeemer": "BOOLEAN NOT NULL DEFAULT 0",
         },
     }
     with engine.begin() as conn:

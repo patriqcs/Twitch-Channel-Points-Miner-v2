@@ -108,6 +108,7 @@ class AccountCreate(BaseModel):
     heist_opener: bool = False
     heist_joiner: bool = False
     chat_redeemer: bool = False
+    web_redeemer: bool = False
 
 
 class AccountUpdate(BaseModel):
@@ -118,6 +119,7 @@ class AccountUpdate(BaseModel):
     heist_opener: Optional[bool] = None
     heist_joiner: Optional[bool] = None
     chat_redeemer: Optional[bool] = None
+    web_redeemer: Optional[bool] = None
 
 
 class AccountRead(BaseModel):
@@ -131,6 +133,7 @@ class AccountRead(BaseModel):
     heist_opener: bool = False
     heist_joiner: bool = False
     chat_redeemer: bool = False
+    web_redeemer: bool = False
     created_at: datetime
     last_login_at: Optional[datetime] = None
 

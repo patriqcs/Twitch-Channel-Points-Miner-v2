@@ -18,10 +18,17 @@ SECRET_KEY_FILE = Path(os.environ.get("SECRET_KEY_FILE", DATA_DIR / "secret.key"
 INTERNAL_TOKEN_FILE = Path(
     os.environ.get("INTERNAL_TOKEN_FILE", DATA_DIR / "internal_token")
 )
+WEBREDEEM_TOKEN_FILE = Path(
+    os.environ.get("WEBREDEEM_TOKEN_FILE", DATA_DIR / "webredeem_token")
+)
 
 # Shared secret for the internal miner_runner <-> backend endpoints.
 # If unset, auto-generated once into INTERNAL_TOKEN_FILE.
 INTERNAL_TOKEN = os.environ.get("INTERNAL_TOKEN", "")
+
+# Shared secret for the public redeem website container <-> backend endpoints
+# (/api/public-redeem/*). If unset, auto-generated once into WEBREDEEM_TOKEN_FILE.
+WEBREDEEM_TOKEN = os.environ.get("WEBREDEEM_TOKEN", "")
 
 # Port the web UI / API (uvicorn) listens on inside the container.
 # Accepts WEB_PORT (preferred) or PORT; defaults to 8000.
@@ -144,6 +151,14 @@ HEIST_COORDINATOR_ENABLED = _bool_env("HEIST_COORDINATOR_ENABLED", True)
 # on/off chat announcement); this env flag disables the whole thread regardless.
 CHATREDEEM_COORDINATOR_ENABLED = _bool_env("CHATREDEEM_COORDINATOR_ENABLED", True)
 
+# ---- Website redeemer ----
+# Runs a backend thread that caches the web_redeemer accounts' balances + the
+# channel's reward catalogue and fires redemptions triggered from the public
+# redeem website (webredeem/ container, via /api/public-redeem/*). Also gated
+# by the DB setting WEBREDEEM_ENABLED (toggled from the UI); this env flag
+# disables the whole thread regardless.
+WEBREDEEM_COORDINATOR_ENABLED = _bool_env("WEBREDEEM_COORDINATOR_ENABLED", True)
+
 
 # ---- Event retention ----
 # points_snapshot events are written every ~60s per account and would grow the
@@ -170,6 +185,24 @@ def get_internal_token() -> str:
     INTERNAL_TOKEN_FILE.write_text(token, encoding="utf-8")
     try:
         os.chmod(INTERNAL_TOKEN_FILE, 0o600)
+    except OSError:
+        pass
+    return token
+
+
+def get_webredeem_token() -> str:
+    """Return the public-website API token (env > file > freshly generated)."""
+    if WEBREDEEM_TOKEN:
+        return WEBREDEEM_TOKEN
+    ensure_dirs()
+    if WEBREDEEM_TOKEN_FILE.exists():
+        return WEBREDEEM_TOKEN_FILE.read_text(encoding="utf-8").strip()
+    import secrets
+
+    token = secrets.token_urlsafe(32)
+    WEBREDEEM_TOKEN_FILE.write_text(token, encoding="utf-8")
+    try:
+        os.chmod(WEBREDEEM_TOKEN_FILE, 0o600)
     except OSError:
         pass
     return token

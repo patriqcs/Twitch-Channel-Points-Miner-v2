@@ -21,9 +21,10 @@ from backend.proxy_monitor import ProxyHealthMonitor
 from backend.watch_monitor import WatchHealthMonitor
 from backend.heist_manager import heist_manager
 from backend.chat_redeem_manager import chat_redeem_manager
+from backend.web_redeem_manager import web_redeem_manager
 from backend.routers import (
-    accounts, chat_redeem, heist, internal, metrics, proxies, redeem,
-    settings, system, ws,
+    accounts, chat_redeem, heist, internal, metrics, proxies, public_redeem,
+    redeem, settings, system, web_redeem, ws,
 )
 
 FRONTEND_DIR = Path(
@@ -151,6 +152,8 @@ async def lifespan(app: FastAPI):
         heist_manager.start()
     if config.CHATREDEEM_COORDINATOR_ENABLED:
         chat_redeem_manager.start()
+    if config.WEBREDEEM_COORDINATOR_ENABLED:
+        web_redeem_manager.start()
     if config.AUTOSTART_ENABLED:
         _autostart_when_ready()
         logger.info("Auto-start armed (waits until proxies reachable, max %ss).",
@@ -160,6 +163,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if config.WEBREDEEM_COORDINATOR_ENABLED:
+            web_redeem_manager.stop()
         if config.CHATREDEEM_COORDINATOR_ENABLED:
             chat_redeem_manager.stop()
         if config.HEIST_COORDINATOR_ENABLED:
@@ -190,6 +195,8 @@ app.include_router(proxies.router)
 app.include_router(redeem.router)
 app.include_router(heist.router)
 app.include_router(chat_redeem.router)
+app.include_router(web_redeem.router)
+app.include_router(public_redeem.router)
 app.include_router(settings.router)
 app.include_router(system.router)
 app.include_router(metrics.router)

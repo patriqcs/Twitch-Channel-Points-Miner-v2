@@ -20,7 +20,7 @@ def _to_read(a: Account) -> AccountRead:
         proxy_id=a.proxy_id, has_password=bool(a.password_enc),
         no_proxy=a.no_proxy,
         heist_opener=a.heist_opener, heist_joiner=a.heist_joiner,
-        chat_redeemer=a.chat_redeemer,
+        chat_redeemer=a.chat_redeemer, web_redeemer=a.web_redeemer,
         created_at=a.created_at, last_login_at=a.last_login_at,
     )
 
@@ -81,7 +81,7 @@ def create_account(payload: AccountCreate, session: Session = Depends(get_sessio
         username=payload.username, password_enc=crypto.encrypt(payload.password),
         proxy_id=proxy_id, enabled=payload.enabled, no_proxy=payload.no_proxy,
         heist_opener=payload.heist_opener, heist_joiner=payload.heist_joiner,
-        chat_redeemer=payload.chat_redeemer,
+        chat_redeemer=payload.chat_redeemer, web_redeemer=payload.web_redeemer,
     )
     session.add(acc)
     session.commit()

@@ -50,6 +50,10 @@ class Account(SQLModel, table=True):
     # the chat-command redeemer (a viewer typing e.g. "!flash" makes the
     # earliest-free of these accounts WITH THE MOST points redeem that reward).
     chat_redeemer: bool = False
+    # Web-redeem role: when True this account's channel points may be spent by
+    # the public redeem website (backend/web_redeem_manager.py) — same
+    # richest-free rotation as chat_redeemer, but selectable independently.
+    web_redeemer: bool = False
     created_at: datetime = Field(default_factory=utcnow)
     last_login_at: Optional[datetime] = None
 
