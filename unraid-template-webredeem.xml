@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>twitch-miner-webredeem</Name>
+  <Repository>ghcr.io/patriqcs/twitch-channel-points-miner-v2:webredeem</Repository>
+  <Registry>https://ghcr.io/patriqcs/twitch-channel-points-miner-v2</Registry>
+  <Network>bridge</Network>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project>https://github.com/patriqcs/Twitch-Channel-Points-Miner-v2</Project>
+  <Overview>
+    Public redeem website for the Twitch Miner Manager: visitors log in with a
+    website user (created in the manager UI, page "Webseite-Einloesen") and
+    trigger channel-point redemptions by click. This is the ONLY container
+    meant to face the internet (e.g. via a Cloudflare Tunnel) — it proxies a
+    handful of API calls to the manager and keeps the shared token server-side.
+    Setup guide: WEBREDEEM.md in the repository.
+  </Overview>
+  <Category>Tools: Other:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <Icon>https://raw.githubusercontent.com/rdavydov/Twitch-Channel-Points-Miner-v2/master/assets/logo.png</Icon>
+  <Config Name="Website Port" Target="8080" Default="8080" Mode="tcp"
+          Description="Host port for the public website. Point your reverse proxy / Cloudflare Tunnel here."
+          Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="MANAGER_URL" Target="MANAGER_URL" Default="http://192.168.178.60:8000" Mode=""
+          Description="Base URL where THIS container reaches the twitch-miner-manager container, e.g. http://UNRAID-IP:8000 (or http://twitch-miner-manager:8000 on a shared custom Docker network). Must NOT be internet-reachable."
+          Type="Variable" Display="always" Required="true" Mask="false">http://192.168.178.60:8000</Config>
+  <Config Name="REDEEM_TOKEN" Target="REDEEM_TOKEN" Default="" Mode=""
+          Description="Shared secret from the manager UI: page 'Webseite-Einloesen' -> 'Token anzeigen' (or the file webredeem_token in the manager's /data)."
+          Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="TRUST_PROXY" Target="TRUST_PROXY" Default="true" Mode=""
+          Description="Use the X-Forwarded-For header for the client IP (leave true behind Cloudflare Tunnel or any reverse proxy; set false when exposed directly)."
+          Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="TZ" Target="TZ" Default="Europe/Berlin" Mode=""
+          Description="Timezone" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>
