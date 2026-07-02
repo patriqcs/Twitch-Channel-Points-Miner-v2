@@ -94,6 +94,28 @@ MINER_HEARTBEAT_INTERVAL = int(os.environ.get("MINER_HEARTBEAT_INTERVAL", "30"))
 MINER_HEARTBEAT_TIMEOUT = int(os.environ.get("MINER_HEARTBEAT_TIMEOUT", "300"))         # s
 MINER_HEARTBEAT_GRACE = int(os.environ.get("MINER_HEARTBEAT_GRACE", "240"))             # s
 
+# Per-account subprocess log (LOGS_DIR/<username>.log) is rotated to <name>.log.1
+# on each (re)start once it exceeds this size, so logs stay bounded (~2x this).
+MINER_LOG_MAX_BYTES = int(os.environ.get("MINER_LOG_MAX_BYTES", str(20 * 1024 * 1024)))
+
+# ---- Engine / entrypoint tunables (read OUTSIDE this module) ----
+# These are consumed directly (via os.environ) by the miner library and the
+# container entrypoint, which must stay independent of the backend package — so
+# they are only DOCUMENTED here, not defined. All are optional with sane
+# defaults; set them in the container environment to override.
+#   MINER_HTTP_CONNECT_TIMEOUT / MINER_HTTP_READ_TIMEOUT  (default 7 / 20 s)
+#       (connect, read) timeout for every engine HTTP call (Twitch.py,
+#       TwitchLogin.py). Prevents a black-holed proxy from hanging a thread.
+#   MINER_WS_PING_MIN / MINER_WS_PING_MAX                 (default 1.5 / 2.5 s)
+#       PubSub WebSocket keep-alive ping cadence when proxied (WebSocketsPool.py);
+#       tuned to stay below the Mullvad SOCKS relay's idle reaper.
+#   HEIST_IRC_KEEPALIVE / HEIST_IRC_STALE                 (default 10 / 45 s)
+#       Client-side IRC keep-alive interval and no-activity staleness timeout for
+#       the heist/chat-redeem observer (backend/heist.py).
+#   COOKIES_DIR (defined above) is now also honored by the engine and
+#       miner_runner, so a custom cookie path is consistent everywhere.
+#   MULLVAD_FULL_TUNNEL (docker-entrypoint-web.sh) accepts 1/true/yes/on.
+
 # ---- Peer watch watchdog ----
 # Every account watches the SAME streamers, so they form a control group: over a
 # rolling WINDOW we compare each running account's point progress. If a healthy

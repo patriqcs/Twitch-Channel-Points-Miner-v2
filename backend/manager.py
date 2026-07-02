@@ -25,14 +25,11 @@ logger = logging.getLogger("manager")
 # Cap per-account log growth. The miner subprocess writes straight to a
 # redirected fd, so we can't use RotatingFileHandler; instead we rotate on each
 # (re)start. With the heartbeat/auto-restart cycling miners periodically this
-# keeps each account's on-disk logs bounded to ~2x this size.
-MINER_LOG_MAX_BYTES = int(os.environ.get("MINER_LOG_MAX_BYTES", str(20 * 1024 * 1024)))
-
-
+# keeps each account's on-disk logs bounded to ~2x config.MINER_LOG_MAX_BYTES.
 def _rotate_log_if_big(log_path) -> None:
-    """Rename <name>.log -> <name>.log.1 when it exceeds MINER_LOG_MAX_BYTES."""
+    """Rename <name>.log -> <name>.log.1 when it exceeds the configured cap."""
     try:
-        if log_path.exists() and log_path.stat().st_size > MINER_LOG_MAX_BYTES:
+        if log_path.exists() and log_path.stat().st_size > config.MINER_LOG_MAX_BYTES:
             backup = log_path.with_suffix(log_path.suffix + ".1")
             os.replace(log_path, backup)
     except OSError:
