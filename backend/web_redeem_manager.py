@@ -14,6 +14,11 @@ when a cooldown blocks it — the website renders that as a countdown).
 Cooldown bookkeeping is shared with the manual "Einlösen" page and the chat
 redeemer through ``backend/redeem.py``, so the website can never double-fire a
 reward that chat just redeemed.
+
+When the (toggleable) chat announcement is on, a configured announcer account
+keeps a persistent chat connection open (reusing ``heist.HeistIRC`` like the
+chat-redeem observer) and posts "user X redeemed Y" after every successful
+website redemption. Announce failures never block the redemption itself.
 """
 import logging
 import math
@@ -22,7 +27,7 @@ import time
 
 from sqlmodel import Session
 
-from backend import redeem, web_redeem
+from backend import chat_redeem, heist, redeem, web_redeem
 from backend.db import engine
 from backend.models import Event
 
@@ -41,6 +46,12 @@ class WebRedeemManager(threading.Thread):
         self._cfg: dict = {"enabled": False, "channel": "", "items": []}
         self._items: dict = {}             # reward_id -> item entry
 
+        # announcer (chat) connection — only while announce is enabled
+        self._announcer: "heist.HeistIRC | None" = None
+        self._announcer_thread: "threading.Thread | None" = None
+        self._announcer_username: str = ""
+        self._announcer_channel: str = ""
+
         # runtime caches
         self._item_cd: dict = {}           # reward_id -> monotonic time free again
         self._inflight: set = set()        # reward_ids with a live redemption
@@ -57,6 +68,7 @@ class WebRedeemManager(threading.Thread):
     # ------------------------------------------------------------------ lifecycle
     def stop(self):
         self._stop.set()
+        self._teardown_announcer()
 
     def run(self):
         logger.info("Web-redeem manager started.")
@@ -78,6 +90,7 @@ class WebRedeemManager(threading.Thread):
 
         if not cfg["enabled"]:
             self._set_reason("aus")
+            self._teardown_announcer()
             return
 
         missing = []
@@ -97,9 +110,76 @@ class WebRedeemManager(threading.Thread):
             with self._lock:
                 self._last_balance_refresh = 0.0   # just enabled -> refresh now
         self._maybe_refresh_balances(cfg)
+        self._ensure_announcer(cfg)
         with self._lock:
             ready = bool(self._reward_cache) and self._channel_id is not None
         self._set_reason("aktiv" if ready else "lade Reward-Katalog…")
+
+    # ------------------------------------------------------------------ announcer
+    def _ensure_announcer(self, cfg):
+        """Keep the chat announcer link up while announce is enabled."""
+        if not cfg.get("announce") or not cfg.get("announcer") or not cfg["channel"]:
+            self._teardown_announcer()
+            return
+        alive = (self._announcer_thread is not None
+                 and self._announcer_thread.is_alive())
+        same = (self._announcer_username == cfg["announcer"]
+                and self._announcer_channel == cfg["channel"])
+        if alive and same:
+            return
+        self._teardown_announcer()
+        with Session(engine) as session:
+            # same creds lookup the chat module uses (case-insensitive username)
+            rec = chat_redeem.announcer_creds(session, cfg["announcer"])
+        if rec is None or not rec["logged_in"]:
+            logger.warning("web-redeem announcer %r missing or not logged in",
+                           cfg["announcer"])
+            return
+        announcer = heist.HeistIRC(rec["username"], rec["token"], cfg["channel"],
+                                   rec["proxy"])
+        t = threading.Thread(target=announcer.start,
+                             name=f"web-redeem-ann-{rec['username']}", daemon=True)
+        t.start()
+        self._announcer = announcer
+        self._announcer_thread = t
+        self._announcer_username = cfg["announcer"]
+        self._announcer_channel = cfg["channel"]
+        logger.info("web-redeem announcer connecting as %s in #%s",
+                    rec["username"], cfg["channel"])
+
+    def _teardown_announcer(self):
+        with self._lock:
+            ann, t = self._announcer, self._announcer_thread
+            self._announcer = None
+            self._announcer_thread = None
+            self._announcer_username = ""
+            self._announcer_channel = ""
+        if ann is not None:
+            try:
+                ann.die()
+            except Exception:  # noqa: BLE001
+                pass
+        if t is not None:
+            t.join(timeout=5)
+
+    def _announce_redeem(self, user: str, reward: dict):
+        """Post "user X redeemed Y" in chat (fire-and-forget, never blocks)."""
+        with self._lock:
+            cfg = self._cfg
+            ann = self._announcer
+        if not cfg.get("announce") or ann is None or not ann.joined.is_set():
+            return
+        text = web_redeem.render_announce_text(
+            cfg.get("announce_text", ""), user, reward["title"], reward.get("cost"))
+
+        def _send():
+            try:
+                ann.send(text)
+            except Exception:  # noqa: BLE001
+                logger.exception("web-redeem announce failed")
+
+        threading.Thread(target=_send, name="web-redeem-announce",
+                         daemon=True).start()
 
     def _set_reason(self, reason: str):
         with self._lock:
@@ -196,6 +276,7 @@ class WebRedeemManager(threading.Thread):
                 acc["id"],
                 f'Webseite ({who}) → „{reward["title"]}" eingelöst ({acc["username"]})')
             self._note_trigger(entry, visitor, ok=True, message=acc["username"])
+            self._announce_redeem(who, reward)
             return {"ok": True, "retry_in": math.ceil(entry["cooldown"]),
                     "message": f'„{reward["title"]}" wurde eingelöst!'}
 
@@ -355,6 +436,7 @@ class WebRedeemManager(threading.Thread):
     def status(self) -> dict:
         now = time.monotonic()
         with self._lock:
+            ann = self._announcer
             triggers = [
                 {"label": t["label"], "visitor": t["visitor"], "ok": t["ok"],
                  "message": t["message"], "age": round(now - t["_at"], 1)}
@@ -366,6 +448,9 @@ class WebRedeemManager(threading.Thread):
                 "channel": self._cfg.get("channel") or None,
                 "channel_display": self._display_name,
                 "catalog_loaded": bool(self._reward_cache),
+                "announce": self._cfg.get("announce", False),
+                "announcer": self._announcer_username or None,
+                "announcer_connected": ann is not None and ann.joined.is_set(),
                 "balances": dict(self._balances),
                 "last_triggers": triggers,
             }

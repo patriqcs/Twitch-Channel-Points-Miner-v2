@@ -83,6 +83,24 @@ class Event(SQLModel, table=True):
     account: Optional[Account] = Relationship(back_populates="events")
 
 
+class WebUser(SQLModel, table=True):
+    """Login account for the PUBLIC redeem website (webredeem/ container).
+
+    Completely separate from ``Account`` (Twitch miner accounts): a WebUser
+    never touches Twitch — it only authenticates a visitor so redemptions can
+    be attributed ("user X redeemed Y") and access can be revoked. Passwords
+    are stored as scrypt hashes (backend/web_users.py); plaintext never
+    touches the database.
+    """
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, unique=True)
+    password_hash: str
+    # set by an admin password reset: the website forces a new password on login
+    must_change_password: bool = False
+    created_at: datetime = Field(default_factory=utcnow)
+    last_seen_at: Optional[datetime] = None
+
+
 class AppSetting(SQLModel, table=True):
     """Global key/value settings (e.g. the shared STREAMERS list)."""
     key: str = Field(primary_key=True)

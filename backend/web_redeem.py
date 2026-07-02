@@ -31,6 +31,9 @@ ITEMS_KEY = "WEBREDEEM_ITEMS"        # JSON list of website item -> reward mappi
 TITLE_KEY = "WEBREDEEM_TITLE"        # public page headline
 TAGLINE_KEY = "WEBREDEEM_TAGLINE"    # public page subline
 OFFLINE_TEXT_KEY = "WEBREDEEM_OFFLINE_TEXT"  # shown on the page while disabled
+ANNOUNCE_KEY = "WEBREDEEM_ANNOUNCE"          # "0"/"1": post web redeems in chat
+ANNOUNCER_KEY = "WEBREDEEM_ANNOUNCER"        # account username that posts them
+ANNOUNCE_TEXT_KEY = "WEBREDEEM_ANNOUNCE_TEXT"  # template: {user} {reward} {cost}
 
 DEFAULT_CHANNEL = "j4nkttv"
 DEFAULT_TITLE = "j4nkt Redeems"
@@ -38,10 +41,14 @@ DEFAULT_TAGLINE = ("Kanalpunkte-Belohnungen für den Stream von j4nkttv — "
                    "direkt hier auslösen, ganz ohne Chat.")
 DEFAULT_OFFLINE_TEXT = ("Die Web-Redeems sind gerade pausiert. "
                         "Schau später nochmal vorbei!")
+DEFAULT_ANNOUNCE_TEXT = ('🌐 {user} hat gerade „{reward}" über die Webseite '
+                         'eingelöst!')
 
 _DEFAULTS = {ENABLED_KEY: "0", CHANNEL_KEY: DEFAULT_CHANNEL, ITEMS_KEY: "[]",
              TITLE_KEY: DEFAULT_TITLE, TAGLINE_KEY: DEFAULT_TAGLINE,
-             OFFLINE_TEXT_KEY: DEFAULT_OFFLINE_TEXT}
+             OFFLINE_TEXT_KEY: DEFAULT_OFFLINE_TEXT,
+             ANNOUNCE_KEY: "0", ANNOUNCER_KEY: "",
+             ANNOUNCE_TEXT_KEY: DEFAULT_ANNOUNCE_TEXT}
 
 # Default per-item cooldown (seconds) when a mapping doesn't specify one. Keeps
 # a single reward from being fired on every click (anti-spam / points protection).
@@ -105,7 +112,21 @@ def get_config(session: Session) -> dict:
         "title": _get_setting(session, TITLE_KEY) or DEFAULT_TITLE,
         "tagline": _get_setting(session, TAGLINE_KEY) or DEFAULT_TAGLINE,
         "offline_text": _get_setting(session, OFFLINE_TEXT_KEY) or DEFAULT_OFFLINE_TEXT,
+        "announce": _get_setting(session, ANNOUNCE_KEY).strip().lower()
+        in ("1", "true", "yes", "on"),
+        "announcer": (_get_setting(session, ANNOUNCER_KEY) or "").strip().lower(),
+        "announce_text": _get_setting(session, ANNOUNCE_TEXT_KEY)
+        or DEFAULT_ANNOUNCE_TEXT,
     }
+
+
+def render_announce_text(template: str, user: str, reward_title: str,
+                         cost: "int | None") -> str:
+    """Fill the chat announcement template's placeholders."""
+    tpl = template or DEFAULT_ANNOUNCE_TEXT
+    return (tpl.replace("{user}", user or "jemand")
+            .replace("{reward}", reward_title)
+            .replace("{cost}", str(cost) if cost is not None else "?"))
 
 
 # ---- account credentials (token from cookie + engine proxy) ----

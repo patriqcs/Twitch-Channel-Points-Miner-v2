@@ -11,6 +11,7 @@ export interface Account {
   heist_opener: boolean;
   heist_joiner: boolean;
   chat_redeemer: boolean;
+  web_redeemer: boolean;
   created_at: string;
   last_login_at: string | null;
 }
@@ -43,6 +44,53 @@ export interface ChatRedeemStatus {
     last_triggers: { command: string; nick: string; ok: boolean; message: string; age: number }[];
   };
   config: ChatRedeemConfig;
+  redeemers: { id: number; username: string; logged_in: boolean; balance: number | null }[];
+}
+
+export interface WebRedeemItem {
+  reward_id: string;
+  label?: string;
+  reward_title?: string;
+  description?: string;
+  cooldown?: number;
+  enabled: boolean;
+}
+
+export interface WebRedeemConfig {
+  enabled: boolean;
+  channel: string;
+  items: WebRedeemItem[];
+  title: string;
+  tagline: string;
+  offline_text: string;
+  announce: boolean;
+  announcer: string;
+  announce_text: string;
+}
+
+export interface WebUserRow {
+  id: number;
+  username: string;
+  must_change_password: boolean;
+  created_at: string;
+  last_seen_at: string | null;
+  generated_password?: string;
+}
+
+export interface WebRedeemStatus {
+  runtime: {
+    enabled: boolean;
+    reason: string;
+    channel: string | null;
+    channel_display: string | null;
+    catalog_loaded: boolean;
+    announce: boolean;
+    announcer: string | null;
+    announcer_connected: boolean;
+    balances: Record<string, number>;
+    last_triggers: { label: string; visitor: string; ok: boolean; message: string; age: number }[];
+  };
+  config: WebRedeemConfig;
   redeemers: { id: number; username: string; logged_in: boolean; balance: number | null }[];
 }
 
@@ -308,6 +356,26 @@ export const api = {
       msg_error: string | null; send_error: string | null;
       channel: string; announcer: string;
     }>("/api/chat-redeem/test", { method: "POST", body: JSON.stringify({ message: message ?? null }) }),
+
+  // web-redeem (visitors trigger reward redemptions from the public website)
+  getWebRedeemConfig: () => req<WebRedeemConfig>("/api/web-redeem/config"),
+  putWebRedeemConfig: (body: Partial<Pick<WebRedeemConfig, "enabled" | "channel" | "items" | "title" | "tagline" | "offline_text" | "announce" | "announcer" | "announce_text">>) =>
+    req<WebRedeemConfig>("/api/web-redeem/config", { method: "PUT", body: JSON.stringify(body) }),
+  getWebRedeemStatus: () => req<WebRedeemStatus>("/api/web-redeem/status"),
+  getWebRedeemRewards: (channel: string) =>
+    req<{ channelId: string; displayName: string; balance: number; rewards: Reward[] }>(
+      `/api/web-redeem/rewards?channel=${encodeURIComponent(channel)}`
+    ),
+  getWebRedeemToken: () => req<{ token: string }>("/api/web-redeem/token"),
+  listWebUsers: () => req<WebUserRow[]>("/api/web-redeem/users"),
+  createWebUser: (body: { username: string; password?: string }) =>
+    req<WebUserRow>("/api/web-redeem/users", { method: "POST", body: JSON.stringify(body) }),
+  resetWebUser: (id: number, password?: string) =>
+    req<WebUserRow>(`/api/web-redeem/users/${id}/reset`, {
+      method: "POST", body: JSON.stringify({ password: password ?? null }),
+    }),
+  deleteWebUser: (id: number) =>
+    req<void>(`/api/web-redeem/users/${id}`, { method: "DELETE" }),
 
   // settings
   getStreamers: () => req<{ streamers: string[]; raw: string }>("/api/settings/streamers"),

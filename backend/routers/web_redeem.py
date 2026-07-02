@@ -11,14 +11,15 @@ The PUBLIC endpoints the website container calls live in
 backend/routers/public_redeem.py (token-protected).
 """
 import json
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from backend import config, redeem, web_redeem
+from backend import config, redeem, web_redeem, web_users
 from backend.db import get_session
-from backend.models import Account
+from backend.models import Account, WebUser
 from backend.web_redeem_manager import web_redeem_manager
 
 router = APIRouter(prefix="/api/web-redeem", tags=["web-redeem"])
@@ -40,6 +41,9 @@ class WebRedeemConfig(BaseModel):
     title: str | None = None
     tagline: str | None = None
     offline_text: str | None = None
+    announce: bool | None = None
+    announcer: str | None = None
+    announce_text: str | None = None
 
 
 @router.get("/config")
@@ -65,6 +69,15 @@ def put_config(body: WebRedeemConfig, session: Session = Depends(get_session)):
     if body.offline_text is not None:
         web_redeem.set_setting(session, web_redeem.OFFLINE_TEXT_KEY,
                                body.offline_text.strip())
+    if body.announce is not None:
+        web_redeem.set_setting(session, web_redeem.ANNOUNCE_KEY,
+                               "1" if body.announce else "0")
+    if body.announcer is not None:
+        web_redeem.set_setting(session, web_redeem.ANNOUNCER_KEY,
+                               body.announcer.strip().lower())
+    if body.announce_text is not None:
+        web_redeem.set_setting(session, web_redeem.ANNOUNCE_TEXT_KEY,
+                               body.announce_text.strip())
     session.commit()
     return web_redeem.get_config(session)
 
@@ -100,6 +113,84 @@ def get_token():
     the trusted, non-public admin surface.
     """
     return {"token": config.get_webredeem_token()}
+
+
+# ---- website login users (username/password accounts for the public site) ----
+def _user_read(u: WebUser) -> dict:
+    return {"id": u.id, "username": u.username,
+            "must_change_password": u.must_change_password,
+            "created_at": u.created_at, "last_seen_at": u.last_seen_at}
+
+
+class WebUserCreate(BaseModel):
+    username: str
+    password: str | None = None   # omitted -> a random one is generated + returned
+
+
+class WebUserReset(BaseModel):
+    password: str | None = None   # omitted -> a random one is generated + returned
+
+
+@router.get("/users")
+def list_users(session: Session = Depends(get_session)):
+    return [_user_read(u) for u in session.exec(select(WebUser)).all()]
+
+
+@router.post("/users", status_code=201)
+def create_user(body: WebUserCreate, session: Session = Depends(get_session)):
+    username = (body.username or "").strip()
+    if not web_users.valid_username(username):
+        raise HTTPException(400, "Benutzername: 3-24 Zeichen, nur a-z, 0-9, _ . -")
+    from sqlalchemy import func
+    if session.exec(select(WebUser).where(
+            func.lower(WebUser.username) == username.lower())).first():
+        raise HTTPException(409, "Benutzername existiert bereits")
+    password = body.password or secrets.token_urlsafe(9)
+    problem = web_users.password_problem(password)
+    if problem:
+        raise HTTPException(400, problem)
+    user = WebUser(username=username,
+                   password_hash=web_users.hash_password(password),
+                   # generated passwords are meant to be handed out -> force change
+                   must_change_password=body.password is None)
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    out = _user_read(user)
+    if body.password is None:
+        out["generated_password"] = password
+    return out
+
+
+@router.post("/users/{user_id}/reset")
+def reset_password(user_id: int, body: WebUserReset,
+                   session: Session = Depends(get_session)):
+    user = session.get(WebUser, user_id)
+    if user is None:
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    password = body.password or secrets.token_urlsafe(9)
+    problem = web_users.password_problem(password)
+    if problem:
+        raise HTTPException(400, problem)
+    user.password_hash = web_users.hash_password(password)
+    user.must_change_password = True   # the user picks their own on next login
+    session.add(user)
+    session.commit()
+    web_users.sessions.drop_user(user_id)   # a reset logs the user out everywhere
+    out = _user_read(user)
+    if body.password is None:
+        out["generated_password"] = password
+    return out
+
+
+@router.delete("/users/{user_id}", status_code=204)
+def delete_user(user_id: int, session: Session = Depends(get_session)):
+    user = session.get(WebUser, user_id)
+    if user is None:
+        raise HTTPException(404, "Benutzer nicht gefunden")
+    session.delete(user)
+    session.commit()
+    web_users.sessions.drop_user(user_id)
 
 
 @router.get("/rewards")
