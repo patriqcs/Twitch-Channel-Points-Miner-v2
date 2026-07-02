@@ -1,0 +1,25 @@
+# Public redeem website (webredeem/): the ONLY internet-facing container.
+# Serves the static page and proxies a handful of API calls to the (private)
+# miner manager, adding the shared REDEEM_TOKEN. See WEBREDEEM.md.
+#
+# Build: docker build -f Dockerfile.webredeem -t twitch-miner-webredeem .
+FROM python:3.11-slim
+WORKDIR /app
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TZ=Europe/Berlin
+
+COPY webredeem/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY webredeem/ ./
+
+# Run as an unprivileged user — this container faces the internet.
+RUN useradd -r -u 10001 webredeem
+USER webredeem
+
+ENV PORT=8080
+EXPOSE 8080
+
+CMD ["python", "app.py"]
