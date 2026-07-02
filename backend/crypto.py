@@ -5,11 +5,14 @@ The key comes from the SECRET_KEY env var if set, otherwise it is generated
 once into DATA_DIR/secret.key (chmod 600). Losing the key makes stored
 passwords unrecoverable — back it up together with the database.
 """
+import logging
 import os
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 from backend import config
+
+logger = logging.getLogger("crypto")
 
 
 def _load_or_create_key() -> bytes:
@@ -54,7 +57,23 @@ def encrypt(plaintext) -> "str | None":
 
 
 def decrypt(token) -> "str | None":
-    """Decrypt a token produced by encrypt(). None/empty -> None."""
+    """Decrypt a token produced by encrypt(). None/empty -> None.
+
+    On an InvalidToken (the SECRET_KEY / secret.key no longer matches the one
+    that encrypted this value — e.g. the key was lost or rotated) we log and
+    return None instead of raising. A raised InvalidToken here is not caught by
+    callers (autostart, proxy monitor, /internal/config) and would take down the
+    whole autostart thread / failover loop, so no account could start at all.
+    """
     if not token:
         return None
-    return _fernet.decrypt(token.encode()).decode()
+    try:
+        return _fernet.decrypt(token.encode()).decode()
+    except InvalidToken:
+        logger.error(
+            "Could not decrypt a stored credential: the SECRET_KEY / secret.key "
+            "does not match the one it was encrypted with. Restore the original "
+            "key (DATA_DIR/secret.key or the SECRET_KEY env var) to recover the "
+            "proxy/account password."
+        )
+        return None

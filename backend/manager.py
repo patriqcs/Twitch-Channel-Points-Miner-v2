@@ -22,6 +22,22 @@ from backend.models import Account, Event, utcnow
 
 logger = logging.getLogger("manager")
 
+# Cap per-account log growth. The miner subprocess writes straight to a
+# redirected fd, so we can't use RotatingFileHandler; instead we rotate on each
+# (re)start. With the heartbeat/auto-restart cycling miners periodically this
+# keeps each account's on-disk logs bounded to ~2x this size.
+MINER_LOG_MAX_BYTES = int(os.environ.get("MINER_LOG_MAX_BYTES", str(20 * 1024 * 1024)))
+
+
+def _rotate_log_if_big(log_path) -> None:
+    """Rename <name>.log -> <name>.log.1 when it exceeds MINER_LOG_MAX_BYTES."""
+    try:
+        if log_path.exists() and log_path.stat().st_size > MINER_LOG_MAX_BYTES:
+            backup = log_path.with_suffix(log_path.suffix + ".1")
+            os.replace(log_path, backup)
+    except OSError:
+        logger.exception("could not rotate log %s", log_path)
+
 
 def _set_status(username: str, status: str) -> None:
     with Session(engine) as session:
@@ -92,6 +108,7 @@ class MinerManager:
 
             config.ensure_dirs()
             log_path = config.LOGS_DIR / f"{username}.log"
+            _rotate_log_if_big(log_path)
             logf = open(log_path, "ab", buffering=0)
 
             env = dict(os.environ)
@@ -132,9 +149,15 @@ class MinerManager:
             self._epoch[username] = self._epoch.get(username, 0) + 1
             self._fail_streak.pop(username, None)
             self._started_at.pop(username, None)
-            proc = self._procs.get(username)
+            # Pop immediately under the lock so a concurrent reaper never sees
+            # this process again (it would otherwise reap the deliberate SIGTERM
+            # exit as a "crash" and auto-restart the account the user stopped).
+            proc = self._procs.pop(username, None)
             if proc is None or proc.poll() is not None:
-                self._procs.pop(username, None)
+                # Nothing live to kill, but the account may be stuck in
+                # "restarting"/"error"/stale "running"; the user asked to stop,
+                # so make the status reflect that instead of leaving it wedged.
+                _set_status(username, "stopped")
                 return False
 
         try:
@@ -151,8 +174,6 @@ class MinerManager:
                 pass
             proc.wait()
 
-        with self._lock:
-            self._procs.pop(username, None)
         _set_status(username, "stopped")
         return True
 
@@ -212,16 +233,29 @@ class MinerManager:
             if code is None:
                 continue
             with self._lock:
+                # Only act if the tracked process is STILL the exact one we
+                # polled. A concurrent stop()/start()/restart() may have popped
+                # it or replaced it with a fresh live process between the
+                # snapshot above and here; acting on a stale entry would untrack
+                # a live miner or auto-restart a deliberately stopped account.
+                if self._procs.get(username) is not proc:
+                    continue
                 started = self._started_at.pop(username, None)
                 self._procs.pop(username, None)
+                epoch = self._epoch.get(username, 0)
             uptime = time.monotonic() - started if started is not None else 0.0
             if self._stop.is_set():
                 _set_status(username, "stopped" if code == 0 else "error")
                 continue
-            self._maybe_autorestart(username, code, uptime)
+            self._maybe_autorestart(username, code, uptime, epoch)
 
-    def _maybe_autorestart(self, username: str, code: int, uptime: float) -> None:
-        """Schedule a backoff restart for an enabled account that crashed."""
+    def _maybe_autorestart(self, username: str, code: int, uptime: float, epoch: int) -> None:
+        """Schedule a backoff restart for an enabled account that crashed.
+
+        `epoch` is the lifecycle generation captured when this exit was reaped;
+        the restart timer is tied to it so any start()/stop() in the meantime
+        (which bumps the epoch) cancels this restart.
+        """
         if not config.MINER_AUTORESTART_ENABLED or not _is_enabled(username):
             with self._lock:
                 self._fail_streak.pop(username, None)
@@ -234,7 +268,6 @@ class MinerManager:
                 self._fail_streak[username] = 0
             n = self._fail_streak.get(username, 0) + 1
             self._fail_streak[username] = n
-            epoch = self._epoch.get(username, 0)
 
         delay = min(
             config.MINER_RESTART_BACKOFF_MAX,
@@ -305,10 +338,15 @@ class MinerManager:
                         f"mining (startup stalled) -> restart",
                     ))
                     continue
-                # Any event at all within the window means the miner is alive.
+                # Liveness must come from the MINER itself. The Reporter emits a
+                # "points_snapshot" every ~60s while it has streamers loaded, so
+                # its absence for the whole window means the miner is hung. Other
+                # event types (heist/redeem/proxy/status) are written by backend
+                # threads for this same account and would mask a hung miner.
                 recent = session.exec(
                     select(Event.id)
                     .where(Event.account_id == acc.id)
+                    .where(Event.type == "points_snapshot")
                     .where(Event.ts >= cutoff)
                     .limit(1)
                 ).first()

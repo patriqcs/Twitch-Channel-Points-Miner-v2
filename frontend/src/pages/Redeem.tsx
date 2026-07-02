@@ -89,9 +89,16 @@ export default function Redeem() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel, accounts.length]);
 
+  const loadSeq = useRef(0);
   const load = async () => {
     const ch = channel.trim().toLowerCase();
     if (!ch) return;
+    // Sequence guard: Enter can trigger load() without the button's loading
+    // guard, so two loads for different channels can race. Only the most recent
+    // load may apply its results; a slower earlier one is dropped, otherwise it
+    // would show channel A's balances/rewards while the input says B (and a
+    // redeem would then post A's reward_id against channel B).
+    const seq = ++loadSeq.current;
     setLoading(true);
     setData({});
     saveConfig({ channel: ch });
@@ -105,6 +112,7 @@ export default function Redeem() {
         }
       })
     );
+    if (seq !== loadSeq.current) return; // a newer load started -> drop stale results
     const map = Object.fromEntries(entries);
     setData(map);
     // reward catalogue = rewards from the first account that loaded successfully

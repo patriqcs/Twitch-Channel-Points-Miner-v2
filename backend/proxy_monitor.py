@@ -28,6 +28,7 @@ from backend.proxy_util import to_engine_proxy
 logger = logging.getLogger("proxy_monitor")
 
 PROXY_ERROR_EVENT = "proxy_error"
+_MONITOR_PROBE_WORKERS = 20
 
 
 class ProxyHealthMonitor:
@@ -67,7 +68,9 @@ class ProxyHealthMonitor:
     @staticmethod
     def _probe_ep(ep) -> bool:
         try:
-            return bool(ep.test_proxy(timeout=8).get("ok"))
+            # ip_check=False: the monitor only needs reachability, not the exit
+            # IP, so skip the second (ipify) round trip per probe.
+            return bool(ep.test_proxy(timeout=8, ip_check=False).get("ok"))
         except Exception:  # noqa: BLE001
             return False
 
@@ -119,6 +122,22 @@ class ProxyHealthMonitor:
 
         # Phase 2 — probe + decide (NO db connection held)
         tested: dict[int, bool] = {}
+
+        # Pre-probe, IN PARALLEL, the proxies currently assigned to a running
+        # account. Otherwise a tick serializes N × 8s timeouts when several
+        # proxies are slow/dead, so the last account's failover lags the first
+        # by minutes. Replacement candidates are still probed lazily below.
+        assigned_pids = sorted({
+            pid for aid, uname, pid, no_proxy in accts
+            if pid is not None and not no_proxy
+            and pid in proxies and self.manager.is_running(uname)
+        })
+        if assigned_pids:
+            with ThreadPoolExecutor(max_workers=min(_MONITOR_PROBE_WORKERS, len(assigned_pids))) as pool:
+                for pid, ok in pool.map(
+                    lambda pid: (pid, self._probe_ep(proxies[pid]["ep"])), assigned_pids
+                ):
+                    tested[pid] = ok
 
         def healthy(pid: int) -> bool:
             if pid not in tested:
@@ -199,4 +218,9 @@ class ProxyHealthMonitor:
             logger.info("[%s] %s", uname, msg)
             if change:
                 self._last_change[uname] = self._naive(utcnow())
-                self.manager.restart(uname)
+                # Re-check liveness right before restarting. The probe phase can
+                # take many seconds, during which the user may have stopped this
+                # account; restart() would otherwise resurrect it. The DB proxy
+                # reassignment above still stands and applies on the next start.
+                if self.manager.is_running(uname):
+                    self.manager.restart(uname)

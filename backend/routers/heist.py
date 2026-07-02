@@ -100,6 +100,11 @@ def get_status(session: Session = Depends(get_session)):
 
 class HeistTest(BaseModel):
     command: str | None = None  # defaults to the configured start command
+    # Only record the ~1h start cooldown when the caller KNOWS this test actually
+    # opened a heist. fire_heist returning True just means "message sent", not
+    # "bot accepted it", so defaulting this on would lock an opener out for an
+    # hour even when the bot rejected the !heist (e.g. one already active).
+    set_cooldown: bool = False
 
 
 @router.post("/test/{account_id}")
@@ -122,9 +127,11 @@ def test_fire(account_id: int, body: HeistTest,
     rec = {"id": acc.id, "username": acc.username, "token": token, "proxy": ep}
     command = (body.command or cfg["start_command"]).strip()
     ok = heist.fire_heist(rec, cfg["channel"], command)
-    # A successful !heist really consumes the bot's per-account cooldown, so
-    # record it (only for the start command, not a join test).
-    if ok and command == cfg["start_command"]:
+    # Only record the bot's per-account cooldown when the caller explicitly says
+    # this test really opened a heist (set_cooldown=True). `ok` alone just means
+    # the message was sent, so setting it unconditionally would lock the opener
+    # out for an hour even on a bot-rejected !heist.
+    if ok and body.set_cooldown and command == cfg["start_command"]:
         heist.set_cooldown(acc.id, cfg["start_cooldown"])
     return {"ok": ok, "username": acc.username, "channel": cfg["channel"],
             "command": command}

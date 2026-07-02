@@ -1,8 +1,8 @@
 import json
 import logging
+import os
 import random
 import time
-# import os
 from threading import Thread, Timer
 # from pathlib import Path
 
@@ -25,7 +25,13 @@ logger = logging.getLogger(__name__)
 
 class WebSocketsPool:
     __slots__ = ["ws", "twitch", "streamers", "events_predictions",
-                 "reconnect_attempts"]
+                 "reconnect_attempts", "stable_since"]
+
+    # A connection must stay open at least this long before we consider it
+    # "good" and reset its backoff counter. Without this, a relay that accepts
+    # the handshake then drops the socket seconds later would reset the counter
+    # in on_open every cycle and reconnect-storm at the 1s floor forever.
+    STABLE_CONNECTION_SECONDS = 60
 
     def __init__(self, twitch, streamers, events_predictions):
         self.ws = []
@@ -33,8 +39,11 @@ class WebSocketsPool:
         self.streamers = streamers
         self.events_predictions = events_predictions
         # per-connection-index count of consecutive failed (re)connects, used
-        # for exponential reconnect backoff. Reset to 0 once a connection opens.
+        # for exponential reconnect backoff. Reset to 0 only once a connection
+        # has stayed open for STABLE_CONNECTION_SECONDS (see on_open).
         self.reconnect_attempts = {}
+        # per-connection-index wall-clock time the current socket opened.
+        self.stable_since = {}
 
     """
     API Limits
@@ -103,8 +112,12 @@ class WebSocketsPool:
     def on_open(ws):
         def run():
             ws.is_opened = True
-            # Connected OK -> reset the reconnect backoff for this index.
-            ws.parent_pool.reconnect_attempts[ws.index] = 0
+            # Mark when this socket opened, but do NOT reset the backoff yet: a
+            # relay that accepts the handshake then drops us seconds later would
+            # otherwise reset the counter every cycle and reconnect-storm at the
+            # 1s floor. The reset happens below, once the socket has proven
+            # stable for STABLE_CONNECTION_SECONDS.
+            ws.parent_pool.stable_since[ws.index] = time.time()
             ws.ping()
 
             for topic in ws.pending_topics:
@@ -118,19 +131,39 @@ class WebSocketsPool:
             # (Twitch ponged 42/42 over 90s). So through a proxy we ping ~every
             # 2s to keep traffic flowing both ways and stay below the reaper.
             proxied = getattr(Settings, "proxy", None) is not None
+            # Ping cadence (configurable). Through a proxy we ping ~every 2s to
+            # stay below the Mullvad relay's idle reaper; direct connections are
+            # fine at ~25-30s.
+            if proxied:
+                ping_lo = float(os.environ.get("MINER_WS_PING_MIN", "1.5"))
+                ping_hi = float(os.environ.get("MINER_WS_PING_MAX", "2.5"))
+            else:
+                ping_lo, ping_hi = 25.0, 30.0
+            # Detect a silently reaped (half-open) connection quickly: derive the
+            # no-PONG timeout from the ping cadence (a handful of missed pongs)
+            # instead of the old flat 5 MINUTES, which left proxied PubSub dead
+            # for ~6 min per reap despite pinging every 2s.
+            pong_timeout = max(ping_hi * 6, 12.0)
             while ws.is_closed is False:
                 # Else: the ws is currently in reconnecting phase, you can't do ping or other operation.
                 # Probably this ws will be closed very soon with ws.is_closed = True
                 if ws.is_reconnecting is False:
                     ws.ping()  # We need ping for keep the connection alive
-                    time.sleep(
-                        random.uniform(1.5, 2.5) if proxied
-                        else random.uniform(25, 30)
-                    )
+                    time.sleep(random.uniform(ping_lo, ping_hi))
 
-                    if ws.elapsed_last_pong() > 5:
+                    # Reset the reconnect backoff only after the socket has been
+                    # stable long enough (see STABLE_CONNECTION_SECONDS).
+                    opened_at = ws.parent_pool.stable_since.get(ws.index)
+                    if (
+                        opened_at is not None
+                        and ws.parent_pool.reconnect_attempts.get(ws.index, 0) != 0
+                        and (time.time() - opened_at) >= WebSocketsPool.STABLE_CONNECTION_SECONDS
+                    ):
+                        ws.parent_pool.reconnect_attempts[ws.index] = 0
+
+                    if (time.time() - ws.last_pong) > pong_timeout:
                         logger.info(
-                            f"#{ws.index} - The last PONG was received more than 5 minutes ago"
+                            f"#{ws.index} - No PONG for {int(time.time() - ws.last_pong)}s; reconnecting"
                         )
                         WebSocketsPool.handle_reconnection(ws)
 

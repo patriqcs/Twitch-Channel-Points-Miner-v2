@@ -47,7 +47,19 @@ export default function Dashboard() {
     if (msg.type === "status") {
       const map: Record<string, string> = {};
       msg.accounts.forEach((a) => (map[a.username] = a.status));
-      setLive(map);
+      setLive((prev) => {
+        // The backend pushes every 2s regardless of change. Bail out (return the
+        // same object) when nothing actually changed, so we don't re-render every
+        // AccountCard and rebuild every chart twice a second for no reason.
+        const keys = Object.keys(map);
+        if (
+          keys.length === Object.keys(prev).length &&
+          keys.every((k) => prev[k] === map[k])
+        ) {
+          return prev;
+        }
+        return map;
+      });
     }
   });
 

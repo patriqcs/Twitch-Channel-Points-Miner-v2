@@ -131,15 +131,24 @@ export default function Accounts() {
 
             <div className="flex gap-1.5">
               <Button size="sm" variant="success" title="Start"
-                onClick={async () => { await api.startAccount(a.id); invalidate(); }}>
+                onClick={async () => {
+                  try { await api.startAccount(a.id); invalidate(); }
+                  catch (er) { setErr((er as Error).message); }
+                }}>
                 <Play size={14} />
               </Button>
               <Button size="sm" variant="outline" title="Stop"
-                onClick={async () => { await api.stopAccount(a.id); invalidate(); }}>
+                onClick={async () => {
+                  try { await api.stopAccount(a.id); invalidate(); }
+                  catch (er) { setErr((er as Error).message); }
+                }}>
                 <Square size={14} />
               </Button>
               <Button size="sm" variant="ghost" title="Neustart"
-                onClick={async () => { await api.restartAccount(a.id); invalidate(); }}>
+                onClick={async () => {
+                  try { await api.restartAccount(a.id); invalidate(); }
+                  catch (er) { setErr((er as Error).message); }
+                }}>
                 <RotateCw size={14} />
               </Button>
               <Button size="sm" variant="outline" title="Login (Device-Code)"
@@ -153,8 +162,10 @@ export default function Accounts() {
               </Button>
               <Button size="sm" variant="ghost" title="Login testen"
                 onClick={async () => {
-                  const r = await api.loginTest(a.id);
-                  setErr(r.ok ? "✅ Login gültig" : `❌ ${r.error}`);
+                  try {
+                    const r = await api.loginTest(a.id);
+                    setErr(r.ok ? "✅ Login gültig" : `❌ ${r.error}`);
+                  } catch (er) { setErr((er as Error).message); }
                 }}>
                 <KeyRound size={14} />
               </Button>
@@ -170,7 +181,8 @@ export default function Accounts() {
               <Button size="sm" variant="danger" title="Löschen"
                 onClick={async () => {
                   if (confirm(`Account ${a.username} löschen?`)) {
-                    await api.deleteAccount(a.id); invalidate();
+                    try { await api.deleteAccount(a.id); invalidate(); }
+                    catch (er) { setErr((er as Error).message); }
                   }
                 }}>
                 <Trash2 size={14} />

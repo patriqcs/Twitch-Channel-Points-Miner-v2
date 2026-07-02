@@ -30,12 +30,13 @@ if [ -n "$SRC" ]; then
   mkdir -p /etc/wireguard
   chmod 600 "$WG_CONF"
 
-  # Split vs full tunnel.
-  if [ "${MULLVAD_FULL_TUNNEL:-false}" = "true" ]; then
-    ALLOWED="0.0.0.0/0, ::/0"
-  else
-    ALLOWED="10.64.0.0/10"
-  fi
+  # Split vs full tunnel. Accept the same truthy spellings as the backend's
+  # _bool_env (1/true/yes/on, case-insensitive) so MULLVAD_FULL_TUNNEL=1 doesn't
+  # silently fall back to split tunnel and leak traffic via the home IP.
+  case "$(printf '%s' "${MULLVAD_FULL_TUNNEL:-false}" | tr '[:upper:]' '[:lower:]')" in
+    1|true|yes|on) ALLOWED="0.0.0.0/0, ::/0" ;;
+    *)             ALLOWED="10.64.0.0/10" ;;
+  esac
   # Force our AllowedIPs and drop DNS= (we manage resolv.conf ourselves so we
   # don't depend on resolvconf being installed). Add a keepalive if missing.
   sed -i -E "s|^[[:space:]]*AllowedIPs[[:space:]]*=.*|AllowedIPs = ${ALLOWED}|I" "$WG_CONF"

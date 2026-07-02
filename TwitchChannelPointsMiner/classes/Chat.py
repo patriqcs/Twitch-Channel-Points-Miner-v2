@@ -1,4 +1,5 @@
 import logging
+import socket
 import time
 from enum import Enum, auto
 from threading import Thread
@@ -9,6 +10,47 @@ from TwitchChannelPointsMiner.constants import IRC, IRC_PORT
 from TwitchChannelPointsMiner.classes.Settings import Events, Settings
 
 logger = logging.getLogger(__name__)
+
+
+def _proxy_connect_factory(proxy):
+    """irc connect_factory that routes the chat TCP socket through the account
+    proxy, so chat presence does not leak the real host IP while every other
+    request goes through the proxy. Falls back to a direct (but timeout-bounded)
+    connection when no proxy is configured.
+    """
+    if proxy is None:
+        def direct_factory(server_address):
+            host, port = server_address
+            sock = socket.create_connection((host, int(port)), timeout=20)
+            sock.settimeout(None)
+            return sock
+
+        return direct_factory
+
+    import socks  # PySocks, pulled in via requests[socks]
+
+    proxy_types = {
+        "http": socks.HTTP, "https": socks.HTTP,
+        "socks4": socks.SOCKS4, "socks4a": socks.SOCKS4,
+        "socks5": socks.SOCKS5, "socks5h": socks.SOCKS5,
+    }
+    ptype = proxy_types[proxy.scheme]
+    rdns = proxy.scheme in ("socks4a", "socks5h")
+
+    def factory(server_address):
+        host, port = server_address
+        sock = socks.socksocket()
+        sock.set_proxy(
+            ptype, proxy.host, int(proxy.port), rdns=rdns,
+            username=proxy.username or None,
+            password=proxy.password or None,
+        )
+        sock.settimeout(20)
+        sock.connect((host, int(port)))
+        sock.settimeout(None)
+        return sock
+
+    return factory
 
 
 class ChatPresence(Enum):
@@ -27,8 +69,12 @@ class ClientIRC(SingleServerIRCBot):
         self.channel = "#" + channel
         self.__active = False
 
+        # Route the chat connection through the same per-account proxy as the
+        # rest of the traffic; otherwise all accounts' authenticated chat logins
+        # egress from the real host IP and link the accounts together.
         super(ClientIRC, self).__init__(
-            [(IRC, IRC_PORT, f"oauth:{token}")], username, username
+            [(IRC, IRC_PORT, f"oauth:{token}")], username, username,
+            connect_factory=_proxy_connect_factory(Settings.proxy),
         )
 
     def on_welcome(self, client, event):

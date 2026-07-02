@@ -9,8 +9,10 @@ set -u
 cd /usr/src/app
 
 if [ -n "${ACCOUNTS:-}" ]; then
-  # Komma/Leerzeichen/Zeilenumbruch als Trenner
-  IFS=$', \n' read -r -a accs <<< "$ACCOUNTS"
+  # Komma/Leerzeichen/Zeilenumbruch als Trenner. -d '' liest die GANZE Eingabe
+  # (inkl. Zeilenumbrüchen) statt nur bis zum ersten \n — sonst würden Accounts
+  # nach einem Zeilenumbruch stillschweigend verschluckt.
+  IFS=$', \n' read -r -d '' -a accs <<< "$ACCOUNTS" || true
 
   pids=()
   shutdown() {

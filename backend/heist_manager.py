@@ -41,12 +41,16 @@ class HeistManager(threading.Thread):
         self._trigger_re: "re.Pattern | None" = None
         self._end_re: "re.Pattern | None" = None
         self._reject_re: "re.Pattern | None" = None
+        # last raw pattern strings compiled, so we only recompile on change.
+        self._last_patterns: tuple = (None, None, None)
 
         # observer / joiner state
         self._observer: "heist.HeistIRC | None" = None
         self._observer_thread: "threading.Thread | None" = None
         self._observer_account_id: "int | None" = None
         self._observer_username: str = ""
+        self._observer_channel: str = ""
+        self._observer_proxy_key: "str | None" = None
         self._extra_joiners: list = []
 
         # runtime state
@@ -132,8 +136,15 @@ class HeistManager(threading.Thread):
 
     # ------------------------------------------------------------------ config
     def _refresh_config(self, cfg: dict):
+        patterns = (cfg["trigger_regex"], cfg["end_regex"], cfg.get("reject_regex"))
         with self._lock:
             self._cfg = cfg
+            # Only recompile when a pattern string actually changed. Otherwise
+            # every 5s tick recompiles all three AND re-logs the same warning for
+            # an invalid pattern forever.
+            if patterns == self._last_patterns:
+                return
+            self._last_patterns = patterns
             try:
                 self._trigger_re = re.compile(cfg["trigger_regex"], re.IGNORECASE) \
                     if cfg["trigger_regex"] else None
@@ -182,13 +193,19 @@ class HeistManager(threading.Thread):
         if not joiners:
             return
         alive = self._observer_thread is not None and self._observer_thread.is_alive()
-        # Re-create if down, or if the primary joiner account changed.
         primary = joiners[0]
-        if alive and self._observer_account_id == primary["id"]:
+        proxy_key = primary["proxy"].url if primary.get("proxy") else None
+        # Re-create if down, or if the primary joiner account, the CHANNEL, or the
+        # assigned PROXY changed. HeistIRC captures the channel and the proxy
+        # connect_factory at construction, so without rebuilding on those changes
+        # a HEIST_CHANNEL edit leaves the observer in the old channel and a proxy
+        # failover leaves it reconnecting through the old (dead) proxy forever.
+        if (alive and self._observer_account_id == primary["id"]
+                and self._observer_channel == cfg["channel"]
+                and self._observer_proxy_key == proxy_key):
             self._extra_joiners = joiners[1:]
             return
         self._teardown_observer()
-        self._extra_joiners = joiners[1:]
         observer = heist.HeistIRC(
             primary["username"], primary["token"], cfg["channel"],
             primary["proxy"], on_message=self._on_bot_message,
@@ -196,20 +213,31 @@ class HeistManager(threading.Thread):
         t = threading.Thread(target=observer.start,
                              name=f"heist-observer-{primary['username']}", daemon=True)
         t.start()
-        self._observer = observer
-        self._observer_thread = t
-        self._observer_account_id = primary["id"]
-        self._observer_username = primary["username"]
+        with self._lock:
+            self._observer = observer
+            self._observer_thread = t
+            self._observer_account_id = primary["id"]
+            self._observer_username = primary["username"]
+            self._observer_channel = cfg["channel"]
+            self._observer_proxy_key = proxy_key
+            self._extra_joiners = joiners[1:]
         logger.info("heist observer/joiner connected as %s in #%s",
                     primary["username"], cfg["channel"])
 
     def _teardown_observer(self):
-        obs, t = self._observer, self._observer_thread
-        self._observer = None
-        self._observer_thread = None
-        self._observer_account_id = None
-        self._observer_username = ""
-        self._extra_joiners = []
+        # Swap the pointers out atomically under the lock (like the chat-redeem
+        # manager) so a concurrent stop() vs tick thread can't both grab the same
+        # observer and double-die/double-join it, or leave a zombie observer that
+        # keeps acting after shutdown. Do the blocking die()/join OUTSIDE the lock.
+        with self._lock:
+            obs, t = self._observer, self._observer_thread
+            self._observer = None
+            self._observer_thread = None
+            self._observer_account_id = None
+            self._observer_username = ""
+            self._observer_channel = ""
+            self._observer_proxy_key = None
+            self._extra_joiners = []
         if obs is not None:
             try:
                 obs.die()
@@ -316,7 +344,12 @@ class HeistManager(threading.Thread):
         currently_active = "currently active" in msg.lower()
         with self._lock:
             was_confirmed = pending.get("confirmed")
-            self._pending = None
+            # Only clear the pending if it is STILL the one this rejection refers
+            # to. A late by-name rejection for opener A must not wipe a newer
+            # pending for opener B that _pending_check + _maybe_open_heist created
+            # in the meantime (B would then never get confirmed).
+            if self._pending is pending:
+                self._pending = None
             if currently_active:
                 # A heist really is running (we just never saw its open) -> block
                 # opening until its end message arrives.

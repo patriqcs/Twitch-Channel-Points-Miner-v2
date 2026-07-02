@@ -88,11 +88,13 @@ class WatchHealthMonitor:
         since = utcnow() - timedelta(seconds=window)
         progress: dict[str, int] = {}
         ids: dict[str, int] = {}
+        no_proxy_map: dict[str, bool] = {}
         with Session(engine) as session:
             accounts = session.exec(
                 select(Account).where(Account.username.in_(eligible))
             ).all()
             for acc in accounts:
+                no_proxy_map[acc.username] = bool(acc.no_proxy)
                 rows = session.exec(
                     select(Event.ts, Event.balance)
                     .where(Event.account_id == acc.id)
@@ -133,17 +135,37 @@ class WatchHealthMonitor:
 
         for u in to_fix:
             self._strikes[u] = 0
-            msg = (f"peers earned ~{int(median_earn)} pts in {window}s but this "
-                   f"account earned 0 (online but not watching) -> failover")
-            logger.warning("[%s] %s", u, msg)
-            with Session(engine) as session:
-                aid = ids[u]
-                # Emit a 'proxy_error': the proxy monitor owns the response — it
-                # moves the account to a working proxy AND restarts it (one
-                # restart). We deliberately do NOT restart here too, or the two
-                # would stack into a churn loop that itself prevents earning.
-                session.add(Event(account_id=aid, type="status",
-                                  reason="watch_stalled", message=msg))
-                session.add(Event(account_id=aid, type="proxy_error",
-                                  message="watch stalled vs peers"))
-                session.commit()
+            aid = ids[u]
+            # Decide who remediates. The proxy monitor only acts on PROXIED
+            # accounts and only when it is enabled; a no_proxy account (or any
+            # account when the proxy monitor is off) would otherwise be flagged
+            # every cycle forever but never healed. In those cases restart the
+            # account directly here — a restart is the only lever we have. For a
+            # normal proxied account with the monitor enabled we still hand off
+            # via 'proxy_error' (failover + one restart) to avoid double restarts.
+            proxy_monitor_will_act = (
+                config.PROXY_MONITOR_ENABLED and not no_proxy_map.get(u, False)
+            )
+            if proxy_monitor_will_act:
+                msg = (f"peers earned ~{int(median_earn)} pts in {window}s but this "
+                       f"account earned 0 (online but not watching) -> failover")
+                logger.warning("[%s] %s", u, msg)
+                with Session(engine) as session:
+                    session.add(Event(account_id=aid, type="status",
+                                      reason="watch_stalled", message=msg))
+                    session.add(Event(account_id=aid, type="proxy_error",
+                                      message="watch stalled vs peers"))
+                    session.commit()
+            else:
+                msg = (f"peers earned ~{int(median_earn)} pts in {window}s but this "
+                       f"account earned 0 (online but not watching) -> restart")
+                logger.warning("[%s] %s", u, msg)
+                with Session(engine) as session:
+                    session.add(Event(account_id=aid, type="status",
+                                      reason="watch_stalled", message=msg))
+                    session.commit()
+                if self.manager.is_running(u):
+                    threading.Thread(
+                        target=self.manager.restart, args=(u,),
+                        name=f"watch-restart-{u}", daemon=True,
+                    ).start()

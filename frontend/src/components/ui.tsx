@@ -74,6 +74,7 @@ export function Textarea({
 const STATUS_COLORS: Record<string, string> = {
   running: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30",
   starting: "bg-amber-500/15 text-amber-400 border-amber-500/30",
+  restarting: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   needs_login: "bg-amber-500/15 text-amber-400 border-amber-500/30",
   stopped: "bg-zinc-500/15 text-zinc-400 border-zinc-500/30",
   error: "bg-red-500/15 text-red-400 border-red-500/30",

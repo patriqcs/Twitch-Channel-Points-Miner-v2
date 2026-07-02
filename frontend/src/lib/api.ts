@@ -147,7 +147,20 @@ async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   if (!res.ok) {
     let detail = res.statusText;
     try {
-      detail = (await res.json()).detail ?? detail;
+      const body = await res.json();
+      const d = body?.detail ?? detail;
+      // FastAPI validation (422) returns `detail` as an array of
+      // {loc, msg, type} objects; join their messages instead of rendering
+      // "[object Object]".
+      if (Array.isArray(d)) {
+        detail = d
+          .map((e) => (typeof e === "string" ? e : e?.msg ?? JSON.stringify(e)))
+          .join("; ");
+      } else if (typeof d === "string") {
+        detail = d;
+      } else if (d != null) {
+        detail = JSON.stringify(d);
+      }
     } catch {
       /* ignore */
     }

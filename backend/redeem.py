@@ -27,10 +27,69 @@ ALL_DELAY_KEY = "REDEEM_ALL_DELAY"        # default global spacing fallback
 MASTER_DELAYS_KEY = "REDEEM_MASTER_DELAYS"  # JSON {reward_id: sec} global spacing between any two fires
 COUNTS_KEY = "REDEEM_COUNTS"              # JSON {reward_id: count} how many to schedule for "all accounts"
 
-# ---- in-memory cooldown state (resets on restart) ----
-_cooldowns: dict = {}            # (account_id, reward_id) -> monotonic time when available again
-_global_free: dict = {}          # reward_id -> monotonic time when reward may fire again globally
+# ---- cooldown state (WALL-CLOCK, persisted across restarts) ----
+# Uses time.time() (not monotonic) and is mirrored into AppSetting so a container
+# restart does not silently wipe every redeem cooldown (which would let a reward
+# be re-spent immediately after a restart). Mirrors the heist module.
+COOLDOWN_STATE_KEY = "REDEEM_COOLDOWN_STATE"   # JSON {"account_id:reward_id": expires_epoch}
+GLOBAL_STATE_KEY = "REDEEM_GLOBAL_STATE"       # JSON {reward_id: expires_epoch}
+
+_cooldowns: dict = {}            # (account_id, reward_id) -> wall-clock epoch when available again
+_global_free: dict = {}          # reward_id -> wall-clock epoch when reward may fire again globally
 _cd_lock = threading.Lock()
+
+
+def _persist_cooldowns() -> None:
+    now = time.time()
+    with _cd_lock:
+        per_acc = {f"{aid}:{rid}": exp for (aid, rid), exp in _cooldowns.items() if exp > now}
+        glob = {rid: exp for rid, exp in _global_free.items() if exp > now}
+    from backend.db import engine
+    try:
+        with Session(engine) as s:
+            _set_setting(s, COOLDOWN_STATE_KEY, json.dumps(per_acc))
+            _set_setting(s, GLOBAL_STATE_KEY, json.dumps(glob))
+            s.commit()
+    except Exception:  # noqa: BLE001
+        import logging
+        logging.getLogger("redeem").exception("could not persist redeem cooldowns")
+
+
+def load_cooldowns() -> None:
+    """Restore persisted redeem cooldowns on startup (drops expired entries)."""
+    import logging
+    from backend.db import engine
+    try:
+        with Session(engine) as s:
+            raw_acc = _get_setting(s, COOLDOWN_STATE_KEY)
+            raw_glob = _get_setting(s, GLOBAL_STATE_KEY)
+    except Exception:  # noqa: BLE001
+        logging.getLogger("redeem").exception("could not load redeem cooldowns")
+        return
+    now = time.time()
+    per_acc, glob = {}, {}
+    try:
+        for key, exp in (json.loads(raw_acc) if raw_acc else {}).items():
+            aid_str, _, rid = key.partition(":")
+            exp = float(exp)
+            if rid and exp > now:
+                per_acc[(int(aid_str), rid)] = exp
+    except (ValueError, TypeError):
+        per_acc = {}
+    try:
+        for rid, exp in (json.loads(raw_glob) if raw_glob else {}).items():
+            exp = float(exp)
+            if exp > now:
+                glob[rid] = exp
+    except (ValueError, TypeError):
+        glob = {}
+    with _cd_lock:
+        _cooldowns.clear(); _cooldowns.update(per_acc)
+        _global_free.clear(); _global_free.update(glob)
+    if per_acc or glob:
+        logging.getLogger("redeem").info(
+            "redeem: restored %d account + %d global cooldown(s) after restart",
+            len(per_acc), len(glob))
 
 # ---- in-memory registry of running "all accounts" master-redeem runs ----
 # run_id -> {stop: Event, reward_id, title, fired, count}. Lets the UI show a
@@ -57,11 +116,6 @@ def _set_setting(session: Session, key: str, value: str) -> None:
 
 
 def get_config(session: Session) -> dict:
-    raw = _get_setting(session, COOLDOWNS_KEY, "{}")
-    try:
-        cooldowns = json.loads(raw) if raw else {}
-    except ValueError:
-        cooldowns = {}
     def _json(key):
         raw = _get_setting(session, key, "{}")
         try:
@@ -70,7 +124,7 @@ def get_config(session: Session) -> dict:
             return {}
     return {
         "channel": _get_setting(session, CHANNEL_KEY, "") or "",
-        "cooldowns": cooldowns,
+        "cooldowns": _json(COOLDOWNS_KEY),
         "master_delays": _json(MASTER_DELAYS_KEY),
         "counts": _json(COUNTS_KEY),
         "all_delay": float(_get_setting(session, ALL_DELAY_KEY, "2") or 2),
@@ -97,13 +151,14 @@ def set_account_cooldown(account_id: int, reward_id: str, seconds: float) -> Non
     if seconds <= 0:
         return
     with _cd_lock:
-        _cooldowns[(account_id, reward_id)] = time.monotonic() + seconds
+        _cooldowns[(account_id, reward_id)] = time.time() + seconds
+    _persist_cooldowns()
 
 
 def cooldown_remaining(account_id: int, reward_id: str) -> float:
     with _cd_lock:
         until = _cooldowns.get((account_id, reward_id), 0)
-    return max(0.0, until - time.monotonic())
+    return max(0.0, until - time.time())
 
 
 def set_global_cooldown(reward_id: str, seconds: float) -> None:
@@ -111,13 +166,14 @@ def set_global_cooldown(reward_id: str, seconds: float) -> None:
     if seconds <= 0:
         return
     with _cd_lock:
-        _global_free[reward_id] = time.monotonic() + seconds
+        _global_free[reward_id] = time.time() + seconds
+    _persist_cooldowns()
 
 
 def global_cooldown_remaining(reward_id: str) -> float:
     with _cd_lock:
         until = _global_free.get(reward_id, 0.0)
-    return max(0.0, until - time.monotonic())
+    return max(0.0, until - time.time())
 
 
 def _available_at(account_id: int, reward_id: str) -> float:
@@ -127,7 +183,7 @@ def _available_at(account_id: int, reward_id: str) -> float:
 
 def active_cooldowns() -> list:
     """Snapshot of currently-active per-(account,reward) cooldowns (remaining > 0s)."""
-    now = time.monotonic()
+    now = time.time()
     with _cd_lock:
         items = list(_cooldowns.items())
     out = []
@@ -168,7 +224,7 @@ def cancel_master_run(run_id: "str | None" = None,
 
 
 def schedule_master_redeem(channel_id, reward, candidates, per_account_cd,
-                           global_delay, count, log_event) -> str:
+                           global_delay, count, log_event, prompt=None) -> str:
     """Background thread: fire `reward` `count` times across `candidates`,
     always taking the account that is free earliest, respecting each account's
     per-account cooldown AND a global spacing between any two fires. Accounts
@@ -199,24 +255,32 @@ def schedule_master_redeem(channel_id, reward, candidates, per_account_cd,
                     break
                 if not pool:
                     break
-                # account that is free earliest
-                pool.sort(key=lambda a: _available_at(a[0], rid))
-                aid, uname, token, proxies = pool[0]
-                fire_at = max(_available_at(aid, rid), _global_free.get(rid, 0.0))
-                wait = fire_at - time.monotonic()
-                if wait > 0:
-                    # interruptible wait so a cancel takes effect promptly
-                    if stop.wait(min(wait, 3600)):
+                # Wait until this fire is actually allowed, RE-CHECKING after each
+                # sleep: another master run or a chat-redeem may advance the global
+                # spacing while we sleep, so we must not fire on a stale fire_at
+                # computed before the wait (that let two runs fire back-to-back).
+                while True:
+                    if stop.is_set():
                         cancelled = True
                         break
-                if stop.is_set():
-                    cancelled = True
+                    # account that is free earliest
+                    pool.sort(key=lambda a: _available_at(a[0], rid))
+                    aid, uname, token, proxies = pool[0]
+                    with _cd_lock:  # locked read of both cooldown maps
+                        fire_at = max(_cooldowns.get((aid, rid), 0.0),
+                                      _global_free.get(rid, 0.0))
+                    wait = fire_at - time.time()
+                    if wait <= 0:
+                        break
+                    if stop.wait(min(wait, 3600)):  # interruptible
+                        cancelled = True
+                        break
+                if cancelled:
                     break
-                r = redeem_reward(token, proxies, channel_id, reward)
+                r = redeem_reward(token, proxies, channel_id, reward, prompt)
                 if r["ok"]:
                     set_account_cooldown(aid, rid, per_account_cd)
-                    with _cd_lock:
-                        _global_free[rid] = time.monotonic() + global_delay
+                    set_global_cooldown(rid, global_delay)
                     fired += 1
                     with _master_lock:
                         if run_id in _master_runs:
@@ -306,20 +370,39 @@ class RedeemError(Exception):
     pass
 
 
+_token_cache: dict = {}          # username -> (cookie_mtime, token)
+_token_cache_lock = threading.Lock()
+
+
 def account_auth_token(username: str) -> "str | None":
-    """Read the 'auth-token' cookie value saved by the miner login."""
+    """Read the 'auth-token' cookie value saved by the miner login.
+
+    Cached by the cookie file's mtime so the heist/chat-redeem tick loops (which
+    call this every few seconds for every account) don't re-open and unpickle the
+    file each time. A re-login rewrites the cookie -> new mtime -> cache miss.
+    """
     cookie = config.COOKIES_DIR / f"{username}.pkl"
-    if not cookie.exists():
+    try:
+        mtime = cookie.stat().st_mtime
+    except OSError:
         return None
+    with _token_cache_lock:
+        cached = _token_cache.get(username)
+        if cached is not None and cached[0] == mtime:
+            return cached[1]
     try:
         with open(cookie, "rb") as f:
             cookies = pickle.load(f)
     except Exception:  # noqa: BLE001
         return None
+    token = None
     for c in cookies or []:
         if isinstance(c, dict) and c.get("name") == "auth-token":
-            return c.get("value")
-    return None
+            token = c.get("value")
+            break
+    with _token_cache_lock:
+        _token_cache[username] = (mtime, token)
+    return token
 
 
 def account_creds(session: Session, account: Account):

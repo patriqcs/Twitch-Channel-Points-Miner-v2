@@ -51,11 +51,12 @@ def migrate_from_files(accounts_path: Path, streamers_path: Path) -> dict:
 
         if streamers:
             setting = session.get(AppSetting, STREAMERS_KEY)
+            # Idempotent (as the module contract promises): only seed the setting
+            # when it doesn't exist yet. Never overwrite an existing STREAMERS
+            # value — that would clobber a list the user edited in the WebUI with
+            # the (possibly stale) streamers.txt on every re-run.
             if setting is None:
                 session.add(AppSetting(key=STREAMERS_KEY, value="\n".join(streamers)))
-            else:
-                setting.value = "\n".join(streamers)
-                session.add(setting)
 
         session.commit()
 

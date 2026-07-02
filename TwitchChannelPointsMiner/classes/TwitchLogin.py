@@ -12,11 +12,31 @@ import pickle
 # import browser_cookie3
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from TwitchChannelPointsMiner.classes.Exceptions import (
     BadCredentialsException,
     WrongCookiesException,
 )
+
+# (connect, read) timeout for the login/OAuth session. Kept local (not imported
+# from Twitch.py) to avoid a circular import.
+_LOGIN_HTTP_TIMEOUT = (
+    float(os.environ.get("MINER_HTTP_CONNECT_TIMEOUT", "7")),
+    float(os.environ.get("MINER_HTTP_READ_TIMEOUT", "20")),
+)
+
+
+class _TimeoutHTTPAdapter(HTTPAdapter):
+    def __init__(self, *args, timeout=None, **kwargs):
+        self._timeout = timeout
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = self._timeout
+        return super().send(request, **kwargs)
 from TwitchChannelPointsMiner.constants import CLIENT_ID, GQLOperations, USER_AGENTS
 
 from datetime import datetime, timedelta, timezone
@@ -45,7 +65,6 @@ class TwitchLogin(object):
         "token",
         "login_check_result",
         "session",
-        "session",
         "username",
         "password",
         "user_id",
@@ -60,6 +79,17 @@ class TwitchLogin(object):
         self.token = None
         self.login_check_result = False
         self.session = requests.session()
+        # Same retry+timeout policy as the mining session: a single proxy blip
+        # during login should self-heal instead of failing the whole login (and
+        # then getting papered over by a heartbeat restart loop). Idempotent
+        # methods only — the device-code/token POSTs are not retried.
+        _retry = Retry(
+            total=3, connect=3, read=2, backoff_factor=0.4,
+            status_forcelist=(500, 502, 503, 504), raise_on_status=False,
+        )
+        _adapter = _TimeoutHTTPAdapter(max_retries=_retry, timeout=_LOGIN_HTTP_TIMEOUT)
+        self.session.mount("http://", _adapter)
+        self.session.mount("https://", _adapter)
         if proxy is not None:
             # Route login / OAuth / user-id lookups through the proxy too.
             self.session.proxies.update(proxy.requests_proxies)
