@@ -148,12 +148,25 @@ def set_default_settings(settings, defaults):
 
 
 def internet_connection_available(host="8.8.8.8", port=53, timeout=3):
+    # Set the timeout on THIS socket only. socket.setdefaulttimeout() would
+    # mutate the process-wide default, silently capping every later socket
+    # (including all requests calls that pass no explicit timeout) at `timeout`
+    # seconds — turning slow-but-healthy proxy responses into spurious
+    # ReadTimeouts. Also close the socket so we don't leak an fd per check.
+    sock = None
     try:
-        socket.setdefaulttimeout(timeout)
-        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        sock.connect((host, port))
         return True
     except socket.error:
         return False
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except socket.error:
+                pass
 
 
 def percentage(a, b):
@@ -201,7 +214,10 @@ def check_versions():
                     s.strip("/")
                     for s in [GITHUB_url, "TwitchChannelPointsMiner", "__init__.py"]
                 ]
-            )
+            ),
+            # Bounded timeout: this runs in every account subprocess's __init__,
+            # so a blackholed route here would hang startup indefinitely.
+            timeout=5,
         )
         github_version = init2dict(r.text)
         github_version = (

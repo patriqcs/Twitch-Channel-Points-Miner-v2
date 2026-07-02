@@ -53,6 +53,29 @@ from TwitchChannelPointsMiner.utils import (
 logger = logging.getLogger(__name__)
 JsonType = Dict[str, Any]
 
+# Default (connect, read) timeout for every HTTP call made through the shared
+# session. Without this a proxy that accepts the TCP handshake but then
+# blackholes the connection (a documented Mullvad SOCKS relay failure mode)
+# blocks the calling thread forever and urllib3's Retry never fires. Any call
+# that passes its own timeout= overrides this.
+DEFAULT_HTTP_TIMEOUT = (
+    float(os.environ.get("MINER_HTTP_CONNECT_TIMEOUT", "7")),
+    float(os.environ.get("MINER_HTTP_READ_TIMEOUT", "20")),
+)
+
+
+class _TimeoutHTTPAdapter(HTTPAdapter):
+    """HTTPAdapter that injects a default timeout when the caller passes none."""
+
+    def __init__(self, *args, timeout=None, **kwargs):
+        self._timeout = timeout
+        super().__init__(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = self._timeout
+        return super().send(request, **kwargs)
+
 
 class Twitch(object):
     __slots__ = [
@@ -71,7 +94,11 @@ class Twitch(object):
     ]
 
     def __init__(self, username, user_agent, password=None, proxy=None):
-        cookies_path = os.path.join(Path().absolute(), "cookies")
+        # Honor COOKIES_DIR so the engine loads/saves cookies in the same place
+        # the backend does (default: cwd/cookies == DATA_DIR/cookies).
+        cookies_path = os.environ.get("COOKIES_DIR") or os.path.join(
+            Path().absolute(), "cookies"
+        )
         Path(cookies_path).mkdir(parents=True, exist_ok=True)
         self.cookies_file = os.path.join(cookies_path, f"{username}.pkl")
         self.user_agent = user_agent
@@ -85,12 +112,17 @@ class Twitch(object):
         # Retry transient connect/read errors a few times with backoff so a
         # momentary blip self-heals instead of surfacing as an ERROR.
         self.session = requests.Session()
+        # allowed_methods left at the urllib3 default (idempotent verbs only) so
+        # non-idempotent GQL mutations (predictions, raid joins, claims, spade
+        # minute-watched) are NEVER transparently re-sent after a read error /
+        # 5xx — that would double-spend points or duplicate telemetry. Transient
+        # GET failures (channel page, settings, gql reads) still self-heal.
         _retry = Retry(
-            total=4, connect=4, read=2, backoff_factor=0.6,
-            status_forcelist=(500, 502, 503, 504), allowed_methods=None,
+            total=3, connect=3, read=2, backoff_factor=0.4,
+            status_forcelist=(500, 502, 503, 504),
             raise_on_status=False,
         )
-        _adapter = HTTPAdapter(max_retries=_retry)
+        _adapter = _TimeoutHTTPAdapter(max_retries=_retry, timeout=DEFAULT_HTTP_TIMEOUT)
         self.session.mount("http://", _adapter)
         self.session.mount("https://", _adapter)
         self.device_id = "".join(
@@ -168,13 +200,23 @@ class Twitch(object):
             response = main_page_request.text
             # logger.info(response)
             regex_settings = "(https://static.twitchcdn.net/config/settings.*?js|https://assets.twitch.tv/config/settings.*?.js)"
-            settings_url = re.search(regex_settings, response).group(1)
+            # A proxy error page or a truncated response yields no match; guard
+            # the .group(1) so a None search result does not raise
+            # AttributeError and crash the whole account process at startup.
+            settings_match = re.search(regex_settings, response)
+            if settings_match is None:
+                logger.debug("get_spade_url: settings url not found in page")
+                return
+            settings_url = settings_match.group(1)
 
             settings_request = self.session.get(settings_url, headers=headers, proxies=self.proxies)
             response = settings_request.text
             regex_spade = '"spade_url":"(.*?)"'
-            streamer.stream.spade_url = re.search(
-                regex_spade, response).group(1)
+            spade_match = re.search(regex_spade, response)
+            if spade_match is None:
+                logger.debug("get_spade_url: spade_url not found in settings")
+                return
+            streamer.stream.spade_url = spade_match.group(1)
         except requests.exceptions.RequestException as e:
             logger.error(
                 f"Something went wrong during extraction of 'spade_url': {e}")
@@ -222,7 +264,17 @@ class Twitch(object):
     def get_channel_id(self, streamer_username):
         json_data = copy.deepcopy(GQLOperations.GetIDFromLogin)
         json_data["variables"]["login"] = streamer_username
-        json_response = self.post_gql_request(json_data)
+        json_response = {}
+        for attempt in range(4):
+            json_response = self.post_gql_request(json_data)
+            if json_response != {}:
+                break
+            # An empty response means a transport failure (proxy blip), NOT a
+            # missing streamer. post_gql_request cannot distinguish the two, so
+            # back off and retry here: otherwise a momentary blip raises
+            # StreamerDoesNotExistException and the streamer is permanently
+            # dropped for the whole run while the account still reports healthy.
+            time.sleep(1.5 * (attempt + 1))
         if (
             "data" not in json_response
             or "user" not in json_response["data"]
@@ -689,10 +741,13 @@ class Twitch(object):
                     except requests.exceptions.Timeout as e:
                         logger.error(
                             f"Error while trying to send minute watched: {e}")
-
-                    self.__chuncked_sleep(
-                        next_iteration - time.time(), chunk_size=chunk_size
-                    )
+                    finally:
+                        # Pacing sleep in finally so the many `continue`s above
+                        # (non-200 responses, missing spade_url) cannot skip it;
+                        # otherwise the while-loop spins hot re-issuing requests.
+                        self.__chuncked_sleep(
+                            next_iteration - time.time(), chunk_size=chunk_size
+                        )
 
                 if streamers_watching == []:
                     # self.__chuncked_sleep(60, chunk_size=chunk_size)

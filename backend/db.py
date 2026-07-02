@@ -62,9 +62,26 @@ def _ensure_columns() -> None:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
+def _ensure_indexes() -> None:
+    """Idempotent composite indexes (create_all only makes single-column ones).
+
+    The heartbeat liveness check and the watch-monitor both query Event by
+    (account_id, type, ts); without a composite index SQLite falls back to a
+    single-column index and scans, which grows costly as the Event table fills.
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_event_account_type_ts "
+            "ON event (account_id, type, ts)"
+        ))
+
+
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _ensure_columns()
+    _ensure_indexes()
 
 
 def get_session():

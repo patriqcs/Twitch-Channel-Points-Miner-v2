@@ -1,14 +1,17 @@
 name: deploy-web-ghcr
 
 # Builds the web-managed multi-account image (Dockerfile.web) and pushes it to
-# GHCR as ghcr.io/patriqcs/twitch-channel-points-miner-v2:web. Uses the built-in
-# GITHUB_TOKEN — no extra secrets required.
+# GHCR as ghcr.io/patriqcs/twitch-miner-multi (the image the Unraid deployment
+# pulls) and the historical twitch-channel-points-miner-v2, tags web/latest/
+# web-<sha>. Uses the built-in GITHUB_TOKEN — no extra secrets required.
 
 on:
   push:
     branches: [master]
     paths:
       - 'Dockerfile.web'
+      - 'docker-entrypoint-web.sh'
+      - '.dockerignore'
       - 'backend/**'
       - 'frontend/**'
       - 'TwitchChannelPointsMiner/**'
@@ -43,7 +46,12 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/patriqcs/twitch-channel-points-miner-v2
+          # Push BOTH the name the Unraid deployment actually pulls
+          # (twitch-miner-multi, per UNRAID.md) and the historical name, so a
+          # master push always rebuilds the deployed image.
+          images: |
+            ghcr.io/patriqcs/twitch-miner-multi
+            ghcr.io/patriqcs/twitch-channel-points-miner-v2
           tags: |
             type=raw,value=web
             type=raw,value=latest

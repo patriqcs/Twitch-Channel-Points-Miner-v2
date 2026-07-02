@@ -64,6 +64,7 @@ class ChatRedeemManager(threading.Thread):
         # runtime caches
         self._cmd_cd: dict = {}            # command token -> monotonic time free again
         self._queued: set = set()          # command tokens currently queued (waiting)
+        self._inflight: set = set()        # command tokens with a live worker (fire or wait)
         self._balances: dict = {}          # account_id -> cached points balance
         self._spent_at: dict = {}          # account_id -> monotonic of last local spend
         self._reward_cache: dict = {}      # reward_id -> reward dict (from catalogue)
@@ -284,19 +285,23 @@ class ChatRedeemManager(threading.Thread):
             entry = self._commands.get(token)
             if entry is None or not entry["enabled"]:
                 return
-            if token in self._queued:
-                return  # already queued (waiting for its cooldown) -> coalesce
+            # Coalesce while a worker for this command is already live. This must
+            # cover the ENTIRE worker lifetime (including the initial fire, whose
+            # proxied redeem can take several seconds), not just the short burst
+            # window: otherwise a second command arriving after BURST_DEDUPE but
+            # before the first redeem completes spawns a second worker and
+            # double-spends.
+            if token in self._inflight or token in self._queued:
+                return
             now = time.monotonic()
             if now < self._cmd_cd.get(token, 0.0):
                 return  # command on cooldown -> ignore (anti-spam)
-            # reserve only a short burst-dedupe window now (so the same command
-            # in the same instant spawns one worker); the FULL configured
-            # cooldown is applied in _do_redeem only once something is spent
             self._cmd_cd[token] = now + (min(entry["cooldown"], self.BURST_DEDUPE) or 1.0)
-        threading.Thread(target=self._do_redeem, args=(entry, nick), daemon=True,
+            self._inflight.add(token)
+        threading.Thread(target=self._do_redeem, args=(entry, nick, token), daemon=True,
                          name=f"chat-redeem-{entry['command']}").start()
 
-    def _do_redeem(self, entry: dict, nick: str):
+    def _do_redeem(self, entry: dict, nick: str, token: str):
         # never let a worker thread die silently (a DB/transient error would
         # otherwise burn the command's reservation with no diagnostic)
         try:
@@ -304,6 +309,9 @@ class ChatRedeemManager(threading.Thread):
         except Exception:  # noqa: BLE001
             logger.exception("chat-redeem worker failed for %s", entry.get("command"))
             self._note_trigger(entry, nick, ok=False, message="interner Fehler")
+        finally:
+            with self._lock:
+                self._inflight.discard(token)
 
     def _do_redeem_inner(self, entry: dict, nick: str):
         reward_id = entry["reward_id"]
@@ -457,6 +465,7 @@ class ChatRedeemManager(threading.Thread):
         try:
             with Session(engine) as session:
                 redeemers = chat_redeem.load_redeemer_accounts(session)
+            redeemer_ids = {r["id"] for r in redeemers if r["logged_in"]}
             balances, catalogue, channel_id = {}, None, None
             for r in redeemers:
                 if not r["logged_in"]:
@@ -474,14 +483,22 @@ class ChatRedeemManager(threading.Thread):
                     catalogue = {rw["id"]: rw for rw in state["rewards"]}
             now = time.monotonic()
             with self._lock:
-                # merge: don't let a stale server balance UNDO a very recent local
-                # spend (Twitch's balance often hasn't reflected the spend yet)
-                merged = dict(balances)
+                # Keep the previously cached balance for a current redeemer whose
+                # fetch FAILED this cycle, instead of dropping it from the rotation
+                # (a single transient proxy blip would otherwise evict a funded
+                # account and reject every command until a later refresh). Scope to
+                # the current redeemer set so removed accounts still fall out.
+                merged = {aid: bal for aid, bal in self._balances.items()
+                          if aid in redeemer_ids}
                 for aid, fetched in balances.items():
                     cached = self._balances.get(aid)
                     spent = self._spent_at.get(aid, 0.0)
+                    # Don't let a stale server balance UNDO a very recent local
+                    # spend (Twitch's balance often hasn't reflected it yet).
                     if cached is not None and (now - spent) < 90 and fetched > cached:
                         merged[aid] = cached
+                    else:
+                        merged[aid] = fetched
                 self._balances = merged
                 if catalogue is not None:
                     self._reward_cache = catalogue

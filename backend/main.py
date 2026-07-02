@@ -139,6 +139,8 @@ def _start_event_pruner() -> None:
 async def lifespan(app: FastAPI):
     config.ensure_dirs()
     init_db()
+    from backend import redeem
+    redeem.load_cooldowns()  # restore persisted redeem cooldowns across restarts
     _reset_statuses_to_stopped()
     manager.start_reaper()
     if config.PROXY_MONITOR_ENABLED:

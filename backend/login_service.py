@@ -56,6 +56,12 @@ class LoginService:
         with self._lock:
             return self._states.get(username) or LoginState()
 
+    def clear(self, username: str) -> None:
+        """Forget a finished login so later status polls return 'idle' and don't
+        keep re-applying the (one-time) authorized->stopped transition."""
+        with self._lock:
+            self._states.pop(username, None)
+
     def start(self, username: str, proxy=None) -> LoginState:
         """Begin a device-code login. Returns the state with user_code set."""
         config.ensure_dirs()
@@ -65,15 +71,17 @@ class LoginService:
         resp = login.send_oauth_request(
             DEVICE_URL, {"client_id": CLIENT_ID, "scopes": SCOPES}
         )
-        if resp.status_code != 200 or "device_code" not in resp.json():
+        try:
+            data = resp.json()
+        except ValueError:
+            data = {}
+        if resp.status_code != 200 or "device_code" not in data:
             state = LoginState()
             state.status = "error"
             state.error = f"device request failed ({resp.status_code})"
             with self._lock:
                 self._states[username] = state
             return state
-
-        data = resp.json()
         state = LoginState()
         state.status = "pending"
         state.user_code = data["user_code"]
@@ -122,7 +130,14 @@ class LoginService:
                 # 400 = user hasn't authorized yet -> keep polling.
                 continue
 
-            body = resp.json()
+            # A non-JSON 200 (e.g. a proxy/captive-portal HTML page) must not
+            # raise here — that would kill this poller thread and leave the login
+            # stuck "pending" forever with nothing to time it out.
+            try:
+                body = resp.json()
+            except ValueError:
+                logger.warning("login poll: non-JSON 200 for %s", username)
+                continue
             if "access_token" not in body:
                 continue
 

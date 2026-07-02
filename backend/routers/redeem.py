@@ -6,6 +6,8 @@ Supports per-reward client cooldowns (shared across accounts) and an
 so a reward with a per-account server cooldown can still be fired frequently by
 spreading it across accounts.
 """
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
@@ -15,6 +17,7 @@ from backend.db import engine, get_session
 from backend.models import Account, Event
 
 router = APIRouter(prefix="/api/redeem", tags=["redeem"])
+logger = logging.getLogger("redeem")
 
 
 def _get_account(session: Session, account_id: int) -> Account:
@@ -103,12 +106,20 @@ class AllRedeemRequest(BaseModel):
 
 
 def _log_event(account_id, ok, message):
-    """Background-safe event logger (own session)."""
+    """Background-safe event logger. Must NEVER raise: it runs inside the
+    master-redeem worker thread, which has no except around it, so a DB hiccup
+    here would abort the whole run mid-way and silently skip the rest."""
     if account_id is None:
+        # Run-level summary (finished/cancelled): Event.account_id is NOT NULL,
+        # so there is no row to attach it to — record it in the log instead.
+        logger.info("master-redeem: %s", message)
         return
-    with Session(engine) as s:
-        s.add(Event(account_id=account_id, type="redeem", message=message))
-        s.commit()
+    try:
+        with Session(engine) as s:
+            s.add(Event(account_id=account_id, type="redeem", message=message))
+            s.commit()
+    except Exception:  # noqa: BLE001
+        logger.exception("could not log redeem event for account %s", account_id)
 
 
 @router.post("/all")
@@ -156,7 +167,8 @@ def redeem_all(body: AllRedeemRequest, session: Session = Depends(get_session)):
     count = body.count if body.count and body.count > 0 else 1
     count = min(count, 500)
     run_id = redeem_mod.schedule_master_redeem(
-        channel_id, reward, candidates, cd_secs, gdelay, count, _log_event
+        channel_id, reward, candidates, cd_secs, gdelay, count, _log_event,
+        prompt=body.prompt,
     )
     return {"reward": reward["title"], "accounts": len(candidates),
             "scheduled": count, "global_delay": gdelay, "run_id": run_id}

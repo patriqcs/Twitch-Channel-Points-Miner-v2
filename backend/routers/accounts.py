@@ -171,9 +171,15 @@ def login_status(account_id: int, session: Session = Depends(get_session)):
     acc = _get(session, account_id)
     state = login_service.get_state(acc.username)
     if state.status == "authorized":
-        acc.status = "stopped"  # logged in, ready to be started
-        session.add(acc)
-        session.commit()
+        # Reflect login completion once, but NEVER clobber a running account:
+        # the in-memory login state stays "authorized" indefinitely, so without
+        # these guards a later poll would flip a mining account to "stopped".
+        if not manager.is_running(acc.username) and acc.status != "running":
+            acc.status = "stopped"  # logged in, ready to be started
+            session.add(acc)
+            session.commit()
+        # Consume the one-time transition so repeated polls stop re-applying it.
+        login_service.clear(acc.username)
     return {"status": state.status, "user_code": state.user_code,
             "verification_uri": state.verification_uri, "error": state.error}
 
@@ -209,18 +215,15 @@ def get_auth_token(account_id: int, session: Session = Depends(get_session)):
     SENSITIVE: the auth-token is a full account credential. Only expose the WebUI
     to trusted networks (or behind Cloudflare Access).
     """
-    import pickle
+    from backend import redeem
 
     acc = _get(session, account_id)
     cookie = config.COOKIES_DIR / f"{acc.username}.pkl"
     if not cookie.exists():
         return {"auth_token": None, "error": "no cookie - login required"}
-    try:
-        with open(cookie, "rb") as f:
-            cookies = pickle.load(f)
-    except Exception as e:  # noqa: BLE001
-        return {"auth_token": None, "error": f"could not read cookie: {e}"}
-    for c in cookies or []:
-        if isinstance(c, dict) and c.get("name") == "auth-token":
-            return {"auth_token": c.get("value"), "error": None}
-    return {"auth_token": None, "error": "auth-token not found in cookie"}
+    # Reuse the single cookie->auth-token extractor (redeem.account_auth_token)
+    # so this credential-returning path can't drift from the others.
+    token = redeem.account_auth_token(acc.username)
+    if token is None:
+        return {"auth_token": None, "error": "auth-token not found in cookie"}
+    return {"auth_token": token, "error": None}

@@ -32,6 +32,19 @@ _TEST_WORKERS = 20
 router = APIRouter(prefix="/api/proxies", tags=["proxies"])
 
 
+def _validate_proxy_fields(scheme: str, host: str, port: int) -> None:
+    """Reject an unsupported scheme / bad host / out-of-range port at the API
+    boundary. Otherwise the row is stored and only blows up later when
+    to_engine_proxy() builds an EngineProxy — inside the autostart thread, the
+    proxy monitor and /internal/config — taking those down for every account."""
+    from TwitchChannelPointsMiner.classes.Proxy import Proxy as EngineProxy
+
+    try:
+        EngineProxy(scheme=scheme, host=host, port=port)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
 def _to_read(p: Proxy, count: int = 0) -> ProxyRead:
     return ProxyRead(
         id=p.id, name=p.name, scheme=p.scheme, host=p.host, port=p.port,
@@ -64,6 +77,7 @@ def list_proxies(session: Session = Depends(get_session)):
 
 @router.post("", response_model=ProxyRead, status_code=201)
 def create_proxy(payload: ProxyCreate, session: Session = Depends(get_session)):
+    _validate_proxy_fields(payload.scheme, payload.host, payload.port)
     p = Proxy(
         name=payload.name, scheme=payload.scheme, host=payload.host,
         port=payload.port, username=payload.username,
@@ -255,6 +269,8 @@ def update_proxy(proxy_id: int, payload: ProxyUpdate,
         p.password_enc = crypto.encrypt(data.pop("password"))
     for k, v in data.items():
         setattr(p, k, v)
+    # Validate the resulting scheme/host/port so a patch can't wedge the row.
+    _validate_proxy_fields(p.scheme, p.host, p.port)
     session.add(p)
     session.commit()
     session.refresh(p)

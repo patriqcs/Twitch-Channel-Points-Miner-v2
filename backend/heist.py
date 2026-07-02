@@ -17,6 +17,7 @@ coordinator that drives it lives in ``backend/heist_manager.py``.
 """
 import json
 import logging
+import os
 import threading
 import time
 
@@ -32,6 +33,22 @@ logger = logging.getLogger("backend.heist")
 
 IRC_SERVER = "irc.chat.twitch.tv"
 IRC_PORT = 6667
+
+# Client-side IRC keepalive/staleness (seconds). A mostly-idle proxied IRC socket
+# gets silently reaped by the Mullvad SOCKS relay within seconds; a half-open
+# reap raises nothing, so without this the observer thread stays alive but deaf
+# forever. We PING every KEEPALIVE s and treat a long silence as a dead
+# connection, break the loop, and let the manager rebuild the observer.
+HEIST_IRC_KEEPALIVE = float(os.environ.get("HEIST_IRC_KEEPALIVE", "10"))
+HEIST_IRC_STALE = float(os.environ.get("HEIST_IRC_STALE", "45"))
+
+# Channel NOTICE texts that mean a message WE sent was actually rejected (vs
+# informational room-state notices like "This room is now in slow mode.", which
+# must NOT be latched as an error or the UI wrongly flags a working announcer).
+_MSG_ERROR_MARKERS = (
+    "banned", "followers-only", "verified phone", "subscribers-only",
+    "too quickly", "not permitted", "unavailable", "suspended",
+)
 
 # ---- persisted config (AppSetting keys) ----
 ENABLED_KEY = "HEIST_ENABLED"
@@ -326,6 +343,7 @@ class HeistIRC(SingleServerIRCBot):
         self.notice_error: "str | None" = None   # login/auth rejection (privnotice)
         self.msg_error: "str | None" = None       # a SENT message was dropped (banned,
         #                                           followers-only, verified-phone, …)
+        self._last_rx = time.time()               # last inbound server activity (keepalive)
         super().__init__(
             [(IRC_SERVER, IRC_PORT, f"oauth:{token}")], username, username,
             connect_factory=_socks_connect_factory(engine_proxy),
@@ -351,6 +369,21 @@ class HeistIRC(SingleServerIRCBot):
 
     def on_join(self, connection, event):
         self.joined.set()
+        self._last_rx = time.time()
+
+    def on_disconnect(self, connection, event):
+        # The connection dropped -> we are no longer in the channel. Clear joined
+        # so managers that use obs.joined.is_set() as "connected" don't keep
+        # treating a dead observer as healthy (and silently miss every heist).
+        self.joined.clear()
+
+    def on_pong(self, connection, event):
+        # Reply to our keepalive PING -> connection is alive.
+        self._last_rx = time.time()
+
+    def on_ping(self, connection, event):
+        # Server-initiated PING (the lib auto-replies); still counts as activity.
+        self._last_rx = time.time()
 
     def _capture_notice(self, event):
         """Twitch rejects a bad/expired oauth with a NOTICE (e.g. 'Login
@@ -373,13 +406,19 @@ class HeistIRC(SingleServerIRCBot):
     def on_pubnotice(self, connection, event):
         # A NOTICE targeting the channel is feedback about a message WE sent
         # (msg_banned, msg_followersonly, msg_requires_verified_phone_number,
-        # msg_subsonly, msg_slowmode …). Record the reason so the UI can show it.
+        # msg_subsonly, msg_slowmode …). Only latch it as an error when it
+        # actually signals a REJECTION — Twitch also sends informational
+        # room-state notices ("This room is now in slow mode.") as channel
+        # NOTICEs, and latching those wrongly flags a perfectly working announcer
+        # (and it was never cleared, so it stuck until reconnect).
+        self._last_rx = time.time()
         text = event.arguments[0] if event.arguments else ""
-        if text:
+        if text and any(m in text.lower() for m in _MSG_ERROR_MARKERS):
             self.msg_error = text
         self._capture_notice(event)
 
     def on_pubmsg(self, connection, event):
+        self._last_rx = time.time()
         if self._on_message is None:
             return
         try:
@@ -394,6 +433,10 @@ class HeistIRC(SingleServerIRCBot):
 
     # ---- helpers ----
     def send(self, text: str) -> None:
+        # Clear any stale rejection state before sending: if THIS message is
+        # rejected, on_pubnotice re-sets it; if it goes through, the error stays
+        # cleared instead of lingering from an unrelated past notice.
+        self.msg_error = None
         self.connection.privmsg(self.channel, text)
 
     def start(self):
@@ -406,15 +449,45 @@ class HeistIRC(SingleServerIRCBot):
             self.connect_error = str(e) or e.__class__.__name__
             self._active = False
             return
+        self._last_rx = time.time()
+        last_ping = time.time()
         while self._active:
             try:
                 self.reactor.process_once(timeout=0.2)
+                now = time.time()
+                # Client keepalive: keep the (proxied) socket below the relay's
+                # idle reaper and detect a silently half-open connection.
+                if now - last_ping >= HEIST_IRC_KEEPALIVE:
+                    last_ping = now
+                    try:
+                        self.connection.ping(str(int(now)))
+                    except Exception:  # noqa: BLE001
+                        pass
+                if now - self._last_rx >= HEIST_IRC_STALE:
+                    logger.warning(
+                        "heist IRC stale (no server activity for %ss) on %s; "
+                        "dropping so it gets rebuilt",
+                        int(now - self._last_rx), self.channel,
+                    )
+                    self.joined.clear()
+                    break
                 time.sleep(0.01)
             except Exception as e:  # noqa: BLE001
                 logger.error("heist IRC loop error (%s): %s", self.channel, e)
+                self.joined.clear()
+                # Sleep on the error path so a persistently-raising process_once
+                # (e.g. a bad fd) can't spin into a 100% CPU hot loop.
+                time.sleep(1.0)
+        # Left the loop -> make sure the socket is closed so the manager's
+        # is_alive()/rebuild logic sees a clean dead observer.
+        try:
+            self.connection.disconnect("bye")
+        except Exception:  # noqa: BLE001
+            pass
 
     def die(self, msg="bye"):
         self._active = False
+        self.joined.clear()
         try:
             self.connection.disconnect(msg)
         except Exception:  # noqa: BLE001

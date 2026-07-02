@@ -11,7 +11,7 @@ import logging
 import time
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import requests
 
@@ -68,12 +68,15 @@ class Proxy:
         parsed = urlparse(url)
         if not parsed.hostname or not parsed.port:
             raise ValueError(f"Proxy URL must contain host and port: {url}")
+        # urlparse does NOT unquote userinfo; .url re-quotes it, so a credential
+        # with reserved chars (e.g. 'p@ss') would be double-encoded on a
+        # url -> from_url round-trip. Unquote here to keep the two symmetric.
         return cls(
             scheme=parsed.scheme or "http",
             host=parsed.hostname,
             port=parsed.port,
-            username=parsed.username,
-            password=parsed.password,
+            username=unquote(parsed.username) if parsed.username else None,
+            password=unquote(parsed.password) if parsed.password else None,
         )
 
     @property
@@ -105,13 +108,14 @@ class Proxy:
             kwargs["http_proxy_auth"] = (self.username, self.password or "")
         return kwargs
 
-    def test_proxy(self, timeout: int = 10) -> dict:
+    def test_proxy(self, timeout: int = 10, ip_check: bool = True) -> dict:
         """Check the proxy can reach Twitch. Returns
         {"ok": True, "ip": str|None, "latency_ms": int} or {"ok": False, "error": str}.
 
         'ok' means Twitch is reachable through the proxy (any HTTP response from
         gql.twitch.tv). The exit IP is fetched best-effort for display only and
-        does not affect the verdict.
+        does not affect the verdict. Pass ip_check=False (e.g. from the health
+        monitor, which only needs 'ok') to skip that second round trip.
         """
         start = time.perf_counter()
         try:
@@ -124,12 +128,13 @@ class Proxy:
             return {"ok": False, "error": str(e)}
 
         ip = None
-        try:
-            r = requests.get(IP_CHECK_URL, proxies=self.requests_proxies, timeout=timeout)
-            if r.ok:
-                ip = r.json().get("ip")
-        except requests.exceptions.RequestException:
-            pass
+        if ip_check:
+            try:
+                r = requests.get(IP_CHECK_URL, proxies=self.requests_proxies, timeout=timeout)
+                if r.ok:
+                    ip = r.json().get("ip")
+            except requests.exceptions.RequestException:
+                pass
         return {"ok": True, "ip": ip, "latency_ms": latency_ms}
 
     def __str__(self):

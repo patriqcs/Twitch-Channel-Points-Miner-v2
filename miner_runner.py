@@ -76,11 +76,36 @@ def _save_followed(username: str, followed: set) -> None:
 
 # ---------------------------------------------------------------- backend I/O
 def fetch_config(username: str) -> dict:
-    """Get streamers + proxy from the backend. Fall back to ENV/files."""
-    try:
-        r = requests.get(
-            f"{BACKEND_URL}/internal/config/{username}", headers=HEADERS, timeout=10
+    """Get streamers + proxy from the backend.
+
+    Under the backend (INTERNAL_TOKEN set) the backend is the source of truth
+    for BOTH streamers and the assigned proxy, so we retry hard on a transient
+    failure and refuse to start rather than silently falling back to ENV — a
+    fallback would drop the account's proxy and mine from the real host IP,
+    linking the accounts. Only in standalone mode do we use the ENV/files
+    fallback (the operator's explicit choice).
+    """
+    url = f"{BACKEND_URL}/internal/config/{username}"
+    if INTERNAL_TOKEN:
+        last_err = None
+        for attempt in range(6):
+            try:
+                r = requests.get(url, headers=HEADERS, timeout=10)
+                r.raise_for_status()
+                return r.json()
+            except requests.exceptions.RequestException as e:
+                last_err = e
+                time.sleep(min(2 ** attempt, 20))
+        logger.error(
+            "Config fetch failed after retries (%s); refusing to start "
+            "unproxied to avoid leaking the real IP.", last_err
         )
+        report(username, "status", reason="error",
+               message="backend config unavailable")
+        sys.exit(1)
+    # Standalone mode (no backend): ENV/files fallback.
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=10)
         r.raise_for_status()
         return r.json()
     except requests.exceptions.RequestException as e:
@@ -155,20 +180,22 @@ class ProxyErrorReporter(logging.Handler):
             return
         now = time.monotonic()
         recent = [t for t in self._hits if now - t <= self.window]
+        # If the window was quiet since the last error, the previous episode is
+        # over and a fresh one must re-earn the threshold.
         if not recent:
-            self._episode = False  # window went quiet -> a fresh episode begins
+            self._episode = False
         recent.append(now)
         self._hits = recent
         if (now - self._last_report) < self.cooldown:
             return
         # Fire on an initial burst (threshold), then KEEP nudging the monitor
-        # every cooldown while errors persist — a slow trickle of failures (one
-        # every couple minutes) would otherwise never re-hit the threshold, so
-        # the backend would stop failing over even though the proxy is still bad.
+        # every cooldown while errors persist. We must NOT clear self._hits here:
+        # doing so made the very next error see an empty window, reset _episode,
+        # and permanently silence the "keep nudging" path for a slow trickle.
+        # Pruning to `window` on each emit already bounds the list.
         if len(self._hits) >= self.threshold or self._episode:
             self._last_report = now
             self._episode = True
-            self._hits.clear()
             report(self.username, "proxy_error", message=msg[:200])
 
 
@@ -292,9 +319,14 @@ def main():
         print("No streamers configured.")
         sys.exit(1)
 
-    # No cookie yet -> needs an interactive device-code login (Phase 4 handles it).
-    cookie_file = os.path.join(os.getcwd(), "cookies", f"{username}.pkl")
-    if not os.path.isfile(cookie_file):
+    # No cookie yet -> needs a device-code login (handled via the backend UI).
+    # Honor COOKIES_DIR the same way the backend does; otherwise the miner would
+    # look in cwd/cookies while the backend saved the cookie elsewhere, so a
+    # freshly-logged-in account would still report needs_login and never mine.
+    cookies_dir = os.environ.get("COOKIES_DIR") or os.path.join(os.getcwd(), "cookies")
+    cookie_file = os.path.join(cookies_dir, f"{username}.pkl")
+    has_cookie = os.path.isfile(cookie_file)
+    if not has_cookie:
         report(username, "status", reason="needs_login")
 
     miner = TwitchChannelPointsMiner(
@@ -335,7 +367,13 @@ def main():
     if proxy and INTERNAL_TOKEN:
         logging.getLogger().addHandler(ProxyErrorReporter(username))
 
-    report(username, "status", reason="starting")
+    # Do NOT overwrite a "needs_login" status with "starting": the heartbeat
+    # watchdog treats "starting" as a stalled startup and restarts the account
+    # every GRACE, so a login-required account would loop forever (and the UI
+    # would never show that a login is needed). Only announce "starting" when we
+    # actually have a cookie to mine with.
+    if has_cookie:
+        report(username, "status", reason="starting")
     try:
         miner.mine([Streamer(n) for n in streamer_names], followers=False,
                    followers_order=FollowersOrder.ASC)
