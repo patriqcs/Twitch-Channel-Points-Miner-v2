@@ -15,7 +15,7 @@
   </Overview>
   <Category>Tools: Other:</Category>
   <WebUI>http://[IP]:[PORT:8000]/</WebUI>
-  <Icon>https://raw.githubusercontent.com/rdavydov/Twitch-Channel-Points-Miner-v2/master/assets/logo.png</Icon>
+  <Icon>https://raw.githubusercontent.com/patriqcs/unraid-templates/main/twitch-miner-multi-icon.png</Icon>
   <ExtraParams>--init --cap-add=NET_ADMIN --device=/dev/net/tun</ExtraParams>
   <Config Name="WebUI Port" Target="8000" Default="8000" Mode="tcp"
           Description="Host port for the web interface. Change the LEFT (host) value to whatever you like — the WebUI link follows it automatically. Only touch WEB_PORT (advanced) if you also change the container-internal port."

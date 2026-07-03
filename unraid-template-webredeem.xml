@@ -17,7 +17,7 @@
   </Overview>
   <Category>Tools: Other:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
-  <Icon>https://raw.githubusercontent.com/rdavydov/Twitch-Channel-Points-Miner-v2/master/assets/logo.png</Icon>
+  <Icon>https://raw.githubusercontent.com/patriqcs/unraid-templates/main/twitch-miner-webredeem-icon.png</Icon>
   <Config Name="Website Port" Target="8080" Default="8080" Mode="tcp"
           Description="Host port for the public website. Point your reverse proxy / Cloudflare Tunnel here."
           Type="Port" Display="always" Required="true" Mask="false">8080</Config>
