@@ -36,7 +36,7 @@ ANNOUNCER_KEY = "WEBREDEEM_ANNOUNCER"        # account username that posts them
 ANNOUNCE_TEXT_KEY = "WEBREDEEM_ANNOUNCE_TEXT"  # template: {user} {reward} {cost}
 
 DEFAULT_CHANNEL = "j4nkttv"
-DEFAULT_TITLE = "j4nkt Redeems"
+DEFAULT_TITLE = "j4nkTTV Redeems"
 DEFAULT_TAGLINE = ("Kanalpunkte-Belohnungen für den Stream von j4nkttv — "
                    "direkt hier auslösen, ganz ohne Chat.")
 DEFAULT_OFFLINE_TEXT = ("Die Web-Redeems sind gerade pausiert. "
