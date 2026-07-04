@@ -46,6 +46,7 @@ export default function WebRedeem() {
 
   const [channel, setChannel] = useState("");
   const [enabled, setEnabled] = useState(false);
+  const [openAccess, setOpenAccess] = useState(false);
   const [items, setItems] = useState<EditItem[]>([]);
   const [title, setTitle] = useState("");
   const [tagline, setTagline] = useState("");
@@ -69,6 +70,7 @@ export default function WebRedeem() {
     if (loaded && !initialized) {
       setChannel(loaded.channel);
       setEnabled(loaded.enabled);
+      setOpenAccess(loaded.public);
       setItems(loaded.items.length ? loaded.items.map(withKey) : [blankItem()]);
       setTitle(loaded.title);
       setTagline(loaded.tagline);
@@ -123,7 +125,7 @@ export default function WebRedeem() {
       // persist the whole current config alongside, so enabling immediately
       // serves the website with the just-edited items and texts
       await api.putWebRedeemConfig({
-        enabled: next, channel: channel.trim().toLowerCase(),
+        enabled: next, public: openAccess, channel: channel.trim().toLowerCase(),
         items: cleanItems(), title, tagline, offline_text: offlineText,
         announce, announcer, announce_text: announceText,
       });
@@ -473,6 +475,24 @@ export default function WebRedeem() {
         </div>
       </Card>
 
+      {/* Access mode */}
+      <Card className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-sm font-semibold">Offener Zugang (ohne Login)</div>
+          <label className="flex items-center gap-1.5 text-xs text-zinc-400">
+            <input type="checkbox" checked={openAccess}
+              onChange={(e) => { setOpenAccess(e.target.checked); saveField({ public: e.target.checked }); }} />
+            an
+          </label>
+        </div>
+        <div className="text-[11px] text-zinc-500">
+          Wenn an: Jeder mit der URL sieht die Belohnungen und kann <b>ohne Anmeldung
+          einlösen</b> — in Trigger-Log und Chat-Ansage erscheint dann „Gast". Die
+          Webseiten-Benutzer unten funktionieren weiterhin, sind aber nicht mehr nötig.
+          Rate-Limits und Cooldowns gelten unverändert.
+        </div>
+      </Card>
+
       {/* Website login users */}
       <Card className="space-y-3">
         <div className="flex items-center gap-2 text-sm font-semibold">
@@ -484,7 +504,8 @@ export default function WebRedeem() {
           )}
         </div>
         <div className="text-[11px] text-zinc-500">
-          Nur mit so einem Benutzer kann man sich auf der Webseite einloggen und einlösen.
+          Nur mit so einem Benutzer kann man sich auf der Webseite einloggen und einlösen
+          (außer „Offener Zugang" ist an, dann geht es auch ohne).
           Besucher können über „Konto erstellen" eine Anfrage stellen — sie erscheint hier
           und muss mit ✓ freigeschaltet werden. Ohne Passwort-Eingabe wird beim Anlegen eins
           generiert und einmalig angezeigt; der Benutzer muss es beim ersten Login ändern.

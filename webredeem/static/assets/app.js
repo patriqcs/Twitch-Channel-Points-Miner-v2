@@ -67,6 +67,8 @@
   function render() {
     var cat = state.catalog;
     var loggedIn = !!state.token && !!(cat && cat.user);
+    // open-access mode: the server serves catalog + redeem without a session
+    var isPublic = !!(cat && cat.public);
 
     if (cat) {
       $("page-title").textContent = cat.title || "Redeems";
@@ -81,20 +83,23 @@
     }
 
     var offline = cat && !cat.enabled;
+    var showRewards = !offline && (loggedIn || isPublic);
     show("view-offline", !!offline);
-    show("view-login", !offline && !loggedIn && !state.showRegister);
-    show("view-register", !offline && !loggedIn && state.showRegister);
-    show("view-rewards", !offline && loggedIn);
-    show("user-box", loggedIn);
+    show("view-login", !offline && !showRewards && !state.showRegister);
+    show("view-register", !offline && !showRewards && state.showRegister);
+    show("view-rewards", showRewards);
+    show("user-box", showRewards);
+    // anonymous open-access visitors get the points pill but no user menu
+    show("user-menu-btn", loggedIn);
 
     if (offline) $("offline-text").textContent = cat.offline_text || "";
 
-    if (loggedIn) {
-      $("user-name").textContent = cat.user.username;
+    if (showRewards) {
+      $("user-name").textContent = cat.user ? cat.user.username : "";
       $("points-total").textContent =
         cat.points_total != null ? cat.points_total.toLocaleString("de-DE") : "—";
       renderCards(cat.items || []);
-      if (cat.user.must_change_password && !state.forcedChange) {
+      if (cat.user && cat.user.must_change_password && !state.forcedChange) {
         state.forcedChange = true;
         openPwModal(true);
       }

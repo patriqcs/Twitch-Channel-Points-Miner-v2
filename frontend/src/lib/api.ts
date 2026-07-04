@@ -58,6 +58,7 @@ export interface WebRedeemItem {
 
 export interface WebRedeemConfig {
   enabled: boolean;
+  public: boolean;
   channel: string;
   items: WebRedeemItem[];
   title: string;
@@ -365,7 +366,7 @@ export const api = {
 
   // web-redeem (visitors trigger reward redemptions from the public website)
   getWebRedeemConfig: () => req<WebRedeemConfig>("/api/web-redeem/config"),
-  putWebRedeemConfig: (body: Partial<Pick<WebRedeemConfig, "enabled" | "channel" | "items" | "title" | "tagline" | "offline_text" | "announce" | "announcer" | "announce_text">>) =>
+  putWebRedeemConfig: (body: Partial<Pick<WebRedeemConfig, "enabled" | "public" | "channel" | "items" | "title" | "tagline" | "offline_text" | "announce" | "announcer" | "announce_text">>) =>
     req<WebRedeemConfig>("/api/web-redeem/config", { method: "PUT", body: JSON.stringify(body) }),
   getWebRedeemStatus: () => req<WebRedeemStatus>("/api/web-redeem/status"),
   getWebRedeemRewards: (channel: string) =>

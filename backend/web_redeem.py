@@ -26,6 +26,7 @@ logger = logging.getLogger("backend.web_redeem")
 
 # ---- persisted config (AppSetting keys) ----
 ENABLED_KEY = "WEBREDEEM_ENABLED"    # "0"/"1": module on/off
+PUBLIC_KEY = "WEBREDEEM_PUBLIC"      # "0"/"1": open access — no login for catalog/redeem
 CHANNEL_KEY = "WEBREDEEM_CHANNEL"    # streamer login: channel to redeem in
 ITEMS_KEY = "WEBREDEEM_ITEMS"        # JSON list of website item -> reward mappings
 TITLE_KEY = "WEBREDEEM_TITLE"        # public page headline
@@ -44,7 +45,8 @@ DEFAULT_OFFLINE_TEXT = ("Die Web-Redeems sind gerade pausiert. "
 DEFAULT_ANNOUNCE_TEXT = ('🌐 {user} hat gerade „{reward}" über die Webseite '
                          'eingelöst!')
 
-_DEFAULTS = {ENABLED_KEY: "0", CHANNEL_KEY: DEFAULT_CHANNEL, ITEMS_KEY: "[]",
+_DEFAULTS = {ENABLED_KEY: "0", PUBLIC_KEY: "0",
+             CHANNEL_KEY: DEFAULT_CHANNEL, ITEMS_KEY: "[]",
              TITLE_KEY: DEFAULT_TITLE, TAGLINE_KEY: DEFAULT_TAGLINE,
              OFFLINE_TEXT_KEY: DEFAULT_OFFLINE_TEXT,
              ANNOUNCE_KEY: "0", ANNOUNCER_KEY: "",
@@ -106,6 +108,8 @@ def get_config(session: Session) -> dict:
     items = normalize_items(data if isinstance(data, list) else [])
     return {
         "enabled": _get_setting(session, ENABLED_KEY).strip().lower()
+        in ("1", "true", "yes", "on"),
+        "public": _get_setting(session, PUBLIC_KEY).strip().lower()
         in ("1", "true", "yes", "on"),
         "channel": (_get_setting(session, CHANNEL_KEY) or "").strip().lower(),
         "items": items,

@@ -36,6 +36,7 @@ class ItemIn(BaseModel):
 
 class WebRedeemConfig(BaseModel):
     enabled: bool | None = None
+    public: bool | None = None
     channel: str | None = None
     items: list[ItemIn] | None = None
     title: str | None = None
@@ -56,6 +57,9 @@ def put_config(body: WebRedeemConfig, session: Session = Depends(get_session)):
     if body.enabled is not None:
         web_redeem.set_setting(session, web_redeem.ENABLED_KEY,
                                "1" if body.enabled else "0")
+    if body.public is not None:
+        web_redeem.set_setting(session, web_redeem.PUBLIC_KEY,
+                               "1" if body.public else "0")
     if body.channel is not None:
         web_redeem.set_setting(session, web_redeem.CHANNEL_KEY,
                                body.channel.strip().lower())

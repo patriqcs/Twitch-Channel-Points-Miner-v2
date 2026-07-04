@@ -9,7 +9,9 @@ anonymous visitor may see (no miner usernames, no per-account balances).
 Visitors additionally authenticate as website users (WebUser, created in the
 manager UI) — the session token travels in the X-Session header. The reward
 catalogue and the trigger are only served to a logged-in user, so the public
-page shows nothing but branding + login until then.
+page shows nothing but branding + login until then. Exception: with the
+"open access" checkbox on (WEBREDEEM_PUBLIC), catalog and trigger work
+without a session too — anonymous redeems are logged/announced as "Gast".
 
   POST /api/public-redeem/auth/register         -> account request (needs approval)
   POST /api/public-redeem/auth/login            -> session token
@@ -26,7 +28,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from backend import config, web_users
+from backend import config, web_redeem, web_users
 from backend.db import get_session
 from backend.models import WebUser
 from backend.web_redeem_manager import web_redeem_manager
@@ -165,12 +167,14 @@ def change_password(body: ChangePasswordIn,
 def catalog(x_session: str = Header(default=""),
             session: Session = Depends(get_session)):
     data = web_redeem_manager.catalog()
+    data["public"] = web_redeem.get_config(session)["public"]
     user = _session_user(session, x_session)
     if user is None:
-        # not logged in: branding only — no rewards, no balances
-        data["items"] = []
-        data["points_total"] = None
         data["user"] = None
+        if not data["public"]:
+            # not logged in: branding only — no rewards, no balances
+            data["items"] = []
+            data["points_total"] = None
         return data
     data["user"] = {"username": user.username,
                     "must_change_password": user.must_change_password}
@@ -186,7 +190,10 @@ def trigger(body: TriggerIn, x_session: str = Header(default=""),
             session: Session = Depends(get_session)):
     user = _session_user(session, x_session)
     if user is None:
-        raise HTTPException(401, "Sitzung abgelaufen — bitte neu einloggen.")
+        if not web_redeem.get_config(session)["public"]:
+            raise HTTPException(401, "Sitzung abgelaufen — bitte neu einloggen.")
+        # open access: anonymous visitors may redeem, attributed as guest
+        return web_redeem_manager.trigger(body.reward_id, "Gast")
     result = web_redeem_manager.trigger(body.reward_id, user.username)
     if result.get("ok"):
         user.last_seen_at = datetime.now(timezone.utc)

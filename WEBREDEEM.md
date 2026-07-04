@@ -26,6 +26,11 @@ Internet ──(Cloudflare Tunnel/Reverse Proxy)──> twitch-miner-webredeem :
 - **Login-Pflicht**: Nur Webseiten-Benutzer (im Manager angelegt, Username +
   Passwort) sehen Belohnungen und können einlösen. Benutzer ändern ihr
   Passwort selbst; nach einem Admin-Reset wird die Änderung erzwungen.
+- **Offener Zugang (optional)**: Checkbox „Offener Zugang (ohne Login)" im
+  Manager. Wenn an, sieht jeder mit der URL die Belohnungen und kann ohne
+  Anmeldung einlösen; im Trigger-Log und in der Chat-Ansage erscheint dann
+  „Gast". Rate-Limits und Cooldowns gelten unverändert; Login funktioniert
+  weiterhin (eingeloggte Benutzer werden weiter namentlich genannt).
 - **Punkte-Anzeige**: Summe der verfügbaren Punkte aller Web-Einlöser-Accounts.
 - **Belohnungs-Karten** mit Kosten, Beschreibung und Live-Cooldown-Countdown.
 - **Chat-Ansage (abschaltbar)**: Ein Ansage-Account postet im Twitch-Chat,
@@ -79,6 +84,9 @@ docker run --rm -p 8080:8080 \
   zusätzlich zu den Per-IP-Limits des Webseiten-Containers.
 - Einlösen: max. 1 Klick / 2 s und 10 / min pro IP, 60 / min global; dazu die
   Cooldowns pro Belohnung (Manager) und pro Account/global (Seite „Einlösen").
+- Bei **offenem Zugang** entfällt die Login-Hürde — Schutz gegen Missbrauch
+  sind dann nur noch diese Rate-Limits und Cooldowns. Für teure Belohnungen
+  den Cooldown entsprechend hoch ansetzen oder den offenen Zugang auslassen.
 - Der Webredeem-Container läuft als unprivilegierter User und kennt keine
   Twitch-Zugangsdaten — selbst bei Kompromittierung sind nur Katalog + Trigger
   mit den konfigurierten Limits erreichbar.

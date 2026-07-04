@@ -1,4 +1,14 @@
-# STAND — Web-Redeem (Stand: 2026-07-02, spät abends)
+# STAND — Web-Redeem (Stand: 2026-07-04)
+
+## Neu (2026-07-04, implementiert, noch NICHT committet/deployed)
+
+- **Offener Zugang (ohne Login)**: Checkbox auf der Manager-Seite
+  „Webseite-Einlösen" (`WEBREDEEM_PUBLIC`, Standard aus). Wenn an, sieht jeder
+  mit der URL die Belohnungen und kann **ohne Anmeldung einlösen**; anonyme
+  Einlösungen erscheinen als „Gast" (Trigger-Log + Chat-Ansage). Login bleibt
+  parallel möglich. Rate-Limits/Cooldowns unverändert.
+- Betroffen sind BEIDE Images: Manager (Backend + Manager-UI) und
+  `:webredeem` (statisches JS) — nach dem Push also beide Container updaten.
 
 ## Kurzfassung
 
