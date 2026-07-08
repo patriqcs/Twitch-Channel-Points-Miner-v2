@@ -1,8 +1,32 @@
 # STAND — Web-Redeem (Stand: 2026-07-04)
 
-## Neu (2026-07-08, Anti-Detection, implementiert + lokal getestet, NICHT deployed)
+## Neu (2026-07-08, Anti-Detection Teil 2 — deployed + live getestet)
 
-Drei Ebenen gegen Bot-Erkennung (Kontext: Ban-Welle 08.07., alle Alts gesperrt):
+Nach der ersten Anti-Detection-Runde (unten) zwei weitere Maßnahmen:
+
+- **Geo-Matching (DE-Relays):** Der geminte Streamer ist deutsch → Zuschauer-Exit-IPs
+  sollen zur Stream-Region passen. Die 30 vorhandenen Mullvad-Relays sind bereits
+  ALLE DE (Frankfurt/Berlin/Düsseldorf); der Import-Default (`MullvadImport.country_code`)
+  ist jetzt zusätzlich fest auf `"de"` (Frontend-Default war schon "de"), damit
+  versehentlich keine Nicht-DE-Relays dazukommen. Hinweis: Mullvad bleibt Datacenter-IP
+  — Geo passt, aber Residential-IPs wären der nächste (teure) Schritt.
+- **Variable Session-Anwesenheit** (`backend/stream_gate.py`, Churn-Loop): Während ein
+  Streamer live ist, wird gelegentlich EIN Account für eine zufällige Weile pausiert
+  und wieder gestartet, damit nicht alle exakt dieselbe Start-bis-Ende-Watchdauer
+  haben (ein Bot-Tell). Konservativ: nie unter `SESSION_CHURN_MIN_PRESENT` (1) laufend,
+  max. `SESSION_CHURN_MAX_CONCURRENT` (1) gleichzeitig pausiert. **Raid-Bonus bleibt
+  sicher:** JoinRaid feuert bei stream-down sofort (1–5s), das Gate stoppt aber erst
+  nach ~3 Min Offline-Hysterese — der Raid wird also immer geclaimt. ENV:
+  `SESSION_CHURN_ENABLED/INTERVAL(300s)/PROB(0.2)/MIN_PRESENT(1)/MAX_CONCURRENT(1)`,
+  `SESSION_PAUSE_MIN/MAX` (300/1500s).
+- **Beobachtbarkeit:** Backend-/Gate-Logs gehen jetzt auf stdout (`docker logs`),
+  inkl. „Stream gate started", „detected LIVE → ramping up", „session pause/resume".
+
+## Neu (2026-07-08, Anti-Detection Teil 1 — deployed + live getestet)
+
+Drei Ebenen gegen Bot-Erkennung (Kontext: Ban-Welle 08.07., alle Alts gesperrt).
+Live verifiziert: voller online↔offline-Zyklus (shlorox-Test), Accounts fahren
+gestaffelt hoch/runter, Raid-Hysterese greift.
 
 - **Stream-Live-Gate** (`backend/stream_gate.py`, ersetzt den blinden Boot-
   Autostart): Accounts laufen NUR NOCH, wenn ein konfigurierter Streamer wirklich

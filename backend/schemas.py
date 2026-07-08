@@ -69,7 +69,10 @@ class ProxyBulkDeleteResult(BaseModel):
 class MullvadImport(BaseModel):
     # Add Mullvad WireGuard SOCKS5 relays as proxies. Only reachable while the
     # container runs inside a Mullvad WireGuard tunnel (see UNRAID.md).
-    country_code: Optional[str] = None  # e.g. "de"; None = all countries
+    # Defaults to "de": the mined streamer is German, so viewers coming from a
+    # German exit IP match the stream's region/language (geo-matching). Pass ""
+    # or another code explicitly to override.
+    country_code: Optional[str] = "de"  # e.g. "de"; "" or None = all countries
     limit: int = 10                     # how many relays to add (0 = all)
     daita_only: bool = False            # only DAITA-enabled relays
 

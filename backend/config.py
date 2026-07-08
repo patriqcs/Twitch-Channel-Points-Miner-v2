@@ -107,6 +107,23 @@ STREAM_GATE_RAMP_STEP_MAX = int(os.environ.get("STREAM_GATE_RAMP_STEP_MAX", "90"
 STREAM_GATE_DRAIN_STEP_MIN = int(os.environ.get("STREAM_GATE_DRAIN_STEP_MIN", "10"))    # s
 STREAM_GATE_DRAIN_STEP_MAX = int(os.environ.get("STREAM_GATE_DRAIN_STEP_MAX", "45"))    # s
 
+# ---- Variable session presence (anti-detection) ----
+# Identical watch-session lengths across many accounts is a bot tell — real
+# viewers step away and come back at different times. While a streamer is live,
+# occasionally pause a single account for a random while, then resume it, so the
+# accounts' presence patterns differ instead of every account watching the exact
+# same start-to-end window. Deliberately conservative: at most CONCURRENT paused
+# at once and never below MIN_PRESENT running, so mining barely dips and the
+# end-of-stream raid bonus (claimed within seconds, long before the gate's
+# offline hysteresis stops anyone) is never at risk.
+SESSION_CHURN_ENABLED = _bool_env("SESSION_CHURN_ENABLED", True)
+SESSION_CHURN_INTERVAL = int(os.environ.get("SESSION_CHURN_INTERVAL", "300"))       # s, how often we roll
+SESSION_CHURN_PROB = float(os.environ.get("SESSION_CHURN_PROB", "0.2"))            # chance per roll to start a pause
+SESSION_CHURN_MIN_PRESENT = int(os.environ.get("SESSION_CHURN_MIN_PRESENT", "1"))  # keep >= this many running
+SESSION_CHURN_MAX_CONCURRENT = int(os.environ.get("SESSION_CHURN_MAX_CONCURRENT", "1"))  # max paused at once
+SESSION_PAUSE_MIN = int(os.environ.get("SESSION_PAUSE_MIN", "300"))                # s, shortest step-away
+SESSION_PAUSE_MAX = int(os.environ.get("SESSION_PAUSE_MAX", "1500"))               # s, longest step-away
+
 # ---- Miner self-repair (watchdog) ----
 # When a miner subprocess for an *enabled* account exits unexpectedly, the
 # reaper restarts it automatically with exponential backoff. A crash-loop guard

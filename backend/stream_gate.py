@@ -69,6 +69,8 @@ class StreamGateMonitor:
         self._offline_strikes = 0
         self._fail_strikes = 0
         self._logged_initial = False
+        self._churn_thread: threading.Thread | None = None
+        self._paused: set[str] = set()  # accounts currently on a session-churn pause
         # Transition generation: bumped on every flip (and on stop) so a slow
         # in-flight ramp worker aborts when the state changes under it.
         self._gen = 0
@@ -91,6 +93,17 @@ class StreamGateMonitor:
             config.STREAM_GATE_RAMP_STEP_MIN, config.STREAM_GATE_RAMP_STEP_MAX,
             config.STREAM_GATE_DRAIN_STEP_MIN, config.STREAM_GATE_DRAIN_STEP_MAX,
         )
+        if config.SESSION_CHURN_ENABLED:
+            self._churn_thread = threading.Thread(
+                target=self._churn_loop, name="stream-gate-churn", daemon=True
+            )
+            self._churn_thread.start()
+            logger.info(
+                "Session churn on (every %ss p=%.2f pause=%s-%ss, keep>=%s running, max %s paused)",
+                config.SESSION_CHURN_INTERVAL, config.SESSION_CHURN_PROB,
+                config.SESSION_PAUSE_MIN, config.SESSION_PAUSE_MAX,
+                config.SESSION_CHURN_MIN_PRESENT, config.SESSION_CHURN_MAX_CONCURRENT,
+            )
 
     def stop(self) -> None:
         self._stop.set()
@@ -213,6 +226,7 @@ class StreamGateMonitor:
 
     def _enter_online(self) -> None:
         self._online = True
+        self._paused.clear()  # fresh session -> no stale pauses carry over
         gen = self._next_gen()
         threading.Thread(
             target=self._ramp_up, args=(gen,), name="gate-rampup", daemon=True
@@ -220,10 +234,53 @@ class StreamGateMonitor:
 
     def _enter_offline(self) -> None:
         self._online = False
+        self._paused.clear()  # stream ended -> pending resumes are moot
         gen = self._next_gen()
         threading.Thread(
             target=self._ramp_down, args=(gen,), name="gate-rampdown", daemon=True
         ).start()
+
+    # ---- variable session presence (churn) ----
+    def _churn_loop(self) -> None:
+        while not self._stop.wait(config.SESSION_CHURN_INTERVAL):
+            try:
+                if self._online is True:
+                    self._maybe_churn()
+            except Exception:  # noqa: BLE001
+                logger.exception("session churn tick failed")
+
+    def _maybe_churn(self) -> None:
+        """Occasionally pause one running account for a random while, so watch
+        sessions don't all span the identical start-to-end window."""
+        if random.random() > config.SESSION_CHURN_PROB:
+            return
+        if len(self._paused) >= config.SESSION_CHURN_MAX_CONCURRENT:
+            return
+        running = [u for u in self._running_usernames() if u not in self._paused]
+        # Never dip below the floor of present accounts (protects the last one).
+        if len(running) - 1 < config.SESSION_CHURN_MIN_PRESENT:
+            return
+        victim = random.choice(running)
+        pause = random.uniform(config.SESSION_PAUSE_MIN, config.SESSION_PAUSE_MAX)
+        gen = self._gen  # tie the resume to the current online generation
+        self._paused.add(victim)
+        _record_event(victim, "session_pause",
+                      f"viewer stepped away -> pause {int(pause / 60)}min (gated)")
+        logger.info("[%s] session pause for %.0fmin (variable presence)", victim, pause / 60)
+        self.manager.stop(victim)
+        timer = threading.Timer(pause, self._resume_after_pause, args=(victim, gen))
+        timer.daemon = True
+        timer.start()
+
+    def _resume_after_pause(self, username: str, gen: int) -> None:
+        self._paused.discard(username)
+        if self._stop.is_set() or self._superseded(gen) or self._online is not True:
+            return  # stream ended / state changed during the pause -> stay stopped
+        if self.manager.is_running(username):
+            return
+        if self.manager.start(username):
+            _record_event(username, "session_resume", "viewer returned -> resume (gated)")
+            logger.info("[%s] session resume (variable presence)", username)
 
     def _enabled_ramp_order(self) -> list[str]:
         """Enabled usernames ordered for ramp-up: established accounts first,
