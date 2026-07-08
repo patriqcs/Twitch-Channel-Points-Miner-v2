@@ -68,6 +68,7 @@ class StreamGateMonitor:
         self._online: bool | None = None
         self._offline_strikes = 0
         self._fail_strikes = 0
+        self._logged_initial = False
         # Transition generation: bumped on every flip (and on stop) so a slow
         # in-flight ramp worker aborts when the state changes under it.
         self._gen = 0
@@ -111,6 +112,15 @@ class StreamGateMonitor:
 
     def _tick(self) -> None:
         live = self._poll_live()  # True (a streamer is live) / False / None (error)
+
+        if not self._logged_initial:
+            self._logged_initial = True
+            state = "unknown (poll error)" if live is None else (
+                "LIVE" if live else "offline")
+            logger.info(
+                "initial live status of %s = %s",
+                ", ".join(self._configured_streamers()) or "(none configured)", state,
+            )
 
         if live is None:
             self._fail_strikes += 1

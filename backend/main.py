@@ -6,6 +6,7 @@ and the internal miner endpoints are added in later phases.
 """
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -138,8 +139,31 @@ def _start_event_pruner() -> None:
     threading.Thread(target=_run, name="event-pruner", daemon=True).start()
 
 
+def _setup_logging() -> None:
+    """Route backend logs (monitors, stream-gate, manager, ...) to stdout.
+
+    uvicorn configures only its own loggers, so our getLogger(...) INFO messages
+    would otherwise go nowhere — watchdog/gate decisions stay invisible in
+    `docker logs`. Called from lifespan (AFTER uvicorn's own logging setup) so
+    our handler isn't overwritten. uvicorn's access/error loggers keep
+    propagate=False, so their lines are not duplicated onto this handler.
+    """
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    if any(getattr(h, "_backend_stdout", False) for h in root.handlers):
+        return  # idempotent across reloads
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s",
+                          "%Y-%m-%d %H:%M:%S")
+    )
+    handler._backend_stdout = True
+    root.addHandler(handler)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _setup_logging()
     config.ensure_dirs()
     init_db()
     from backend import redeem
