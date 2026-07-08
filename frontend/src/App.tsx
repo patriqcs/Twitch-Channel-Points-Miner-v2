@@ -2,6 +2,7 @@ import { Routes, Route } from "react-router-dom";
 import Layout from "./components/Layout";
 import Dashboard from "./pages/Dashboard";
 import Accounts from "./pages/Accounts";
+import CreateAccount from "./pages/CreateAccount";
 import Proxies from "./pages/Proxies";
 import Redeem from "./pages/Redeem";
 import ChatRedeem from "./pages/ChatRedeem";
@@ -16,6 +17,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
         <Route path="accounts" element={<Accounts />} />
+        <Route path="account-anlegen" element={<CreateAccount />} />
         <Route path="proxies" element={<Proxies />} />
         <Route path="redeem" element={<Redeem />} />
         <Route path="chat-redeem" element={<ChatRedeem />} />

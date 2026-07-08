@@ -1,5 +1,18 @@
 # STAND — Web-Redeem (Stand: 2026-07-04)
 
+## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
+
+Neuer Manager-Tab **Account anlegen** (`frontend/src/pages/CreateAccount.tsx`,
+Route `/account-anlegen`) zum sauberen Erfassen neuer Twitch-Accounts:
+Username / E-Mail (optional) / Passwort + feste **DE-Relay-Zuweisung** (belegt/5)
++ Rollen-Checkboxen + Erstellungs-Checkliste (Anti-Detect-Profil, IPv6 aus,
+E-Mail-Verify statt Telefon). Nutzt den bestehenden `POST /api/accounts` — neu
+ist nur das optionale Feld **`signup_email`** (Account-Model + `_ensure_columns`
++ `AccountCreate.email`/`AccountRead.signup_email`), rein zur Übersicht.
+Verworfen: die Signup-Bridge (Mullvad-SOCKS5 an den Browser) — Accounts werden
+über den heimischen DS-Lite-Anschluss (Residential-IP, bessere Signup-Reputation)
+erstellt, nicht über Datacenter-Mullvad. Details siehe Memory.
+
 ## Neu (2026-07-08, Anti-Detection Teil 2 — deployed + live getestet)
 
 Nach der ersten Anti-Detection-Runde (unten) zwei weitere Maßnahmen:

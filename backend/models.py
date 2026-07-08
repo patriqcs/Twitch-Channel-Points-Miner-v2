@@ -73,6 +73,9 @@ class Account(SQLModel, table=True):
     ua_web: Optional[str] = Field(default_factory=new_web_user_agent)
     created_at: datetime = Field(default_factory=utcnow)
     last_login_at: Optional[datetime] = None
+    # Optional signup email, recorded via the "Account anlegen" tab purely for
+    # the operator's own reference (Twitch remains the source of truth). Nullable.
+    signup_email: Optional[str] = None
 
     proxy: Optional[Proxy] = Relationship(back_populates="accounts")
     # delete-orphan: removing an account also removes its events. Without this,

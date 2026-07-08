@@ -12,6 +12,7 @@ export interface Account {
   heist_joiner: boolean;
   chat_redeemer: boolean;
   web_redeemer: boolean;
+  signup_email: string | null;
   created_at: string;
   last_login_at: string | null;
 }
@@ -223,7 +224,7 @@ async function req<T>(url: string, opts?: RequestInit): Promise<T> {
 export const api = {
   // accounts
   listAccounts: () => req<Account[]>("/api/accounts"),
-  createAccount: (b: Partial<Account> & { username: string; password?: string }) =>
+  createAccount: (b: Partial<Account> & { username: string; password?: string; email?: string }) =>
     req<Account>("/api/accounts", { method: "POST", body: JSON.stringify(b) }),
   updateAccount: (id: number, b: Record<string, unknown>) =>
     req<Account>(`/api/accounts/${id}`, { method: "PATCH", body: JSON.stringify(b) }),

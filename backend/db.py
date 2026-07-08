@@ -55,6 +55,7 @@ def _ensure_columns() -> None:
             "device_id": "VARCHAR",
             "ua_app": "VARCHAR",
             "ua_web": "VARCHAR",
+            "signup_email": "VARCHAR",
         },
         # existing website users predate self-registration -> keep them approved
         "webuser": {

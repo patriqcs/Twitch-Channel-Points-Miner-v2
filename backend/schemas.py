@@ -105,6 +105,7 @@ class ProxyImportResult(BaseModel):
 class AccountCreate(BaseModel):
     username: str
     password: Optional[str] = None
+    email: Optional[str] = None
     proxy_id: Optional[int] = None
     enabled: bool = True
     no_proxy: bool = False
@@ -141,6 +142,7 @@ class AccountRead(BaseModel):
     heist_joiner: bool = False
     chat_redeemer: bool = False
     web_redeemer: bool = False
+    signup_email: Optional[str] = None
     # Read-only per-account client fingerprint (assigned at creation, fixed for
     # the account's lifetime). Exposed for transparency in the manager UI.
     device_id: Optional[str] = None

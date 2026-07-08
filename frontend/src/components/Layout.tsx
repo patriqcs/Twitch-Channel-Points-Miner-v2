@@ -1,10 +1,11 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { LayoutDashboard, Users, Network, Settings, ScrollText, Gift, Banknote, MessageSquare, Globe } from "lucide-react";
+import { LayoutDashboard, Users, UserPlus, Network, Settings, ScrollText, Gift, Banknote, MessageSquare, Globe } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/accounts", label: "Accounts", icon: Users },
+  { to: "/account-anlegen", label: "Account anlegen", icon: UserPlus },
   { to: "/proxies", label: "Proxys", icon: Network },
   { to: "/redeem", label: "Einlösen", icon: Gift },
   { to: "/chat-redeem", label: "Chat-Einlösen", icon: MessageSquare },

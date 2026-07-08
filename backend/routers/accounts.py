@@ -23,6 +23,7 @@ def _to_read(a: Account) -> AccountRead:
         chat_redeemer=a.chat_redeemer, web_redeemer=a.web_redeemer,
         device_id=a.device_id, ua_app=a.ua_app, ua_web=a.ua_web,
         created_at=a.created_at, last_login_at=a.last_login_at,
+        signup_email=a.signup_email,
     )
 
 
@@ -83,6 +84,7 @@ def create_account(payload: AccountCreate, session: Session = Depends(get_sessio
         proxy_id=proxy_id, enabled=payload.enabled, no_proxy=payload.no_proxy,
         heist_opener=payload.heist_opener, heist_joiner=payload.heist_joiner,
         chat_redeemer=payload.chat_redeemer, web_redeemer=payload.web_redeemer,
+        signup_email=payload.email,
     )
     session.add(acc)
     session.commit()
