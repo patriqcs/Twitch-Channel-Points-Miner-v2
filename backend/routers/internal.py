@@ -44,6 +44,16 @@ def get_config(username: str, session: Session = Depends(get_session)):
     if not acc.no_proxy and acc.proxy_id is not None:
         proxy = proxy_url(session.get(Proxy, acc.proxy_id))
 
+    # Account age (days) drives the behavioural warm-up: a freshly added account
+    # holds back (no predictions yet, later stream-gate ramp slot) and grows into
+    # full behaviour. None if unknown (very old rows) -> treated as established.
+    age_days = None
+    if acc.created_at is not None:
+        created = acc.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age_days = max(0.0, (datetime.now(timezone.utc) - created).total_seconds() / 86400.0)
+
     return {
         "username": username,
         "streamers": streamers,
@@ -52,6 +62,7 @@ def get_config(username: str, session: Session = Depends(get_session)):
         "device_id": acc.device_id,
         "ua_app": acc.ua_app,
         "ua_web": acc.ua_web,
+        "account_age_days": age_days,
     }
 
 

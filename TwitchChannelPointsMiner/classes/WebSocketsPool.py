@@ -16,8 +16,11 @@ from TwitchChannelPointsMiner.classes.Settings import Events, Settings
 from TwitchChannelPointsMiner.classes.TwitchWebSocket import TwitchWebSocket
 from TwitchChannelPointsMiner.constants import WEBSOCKET
 from TwitchChannelPointsMiner.utils import (
+    action_jitter,
+    defer,
     get_streamer_index,
     internet_connection_available,
+    warmup_blocks_betting,
 )
 
 logger = logging.getLogger(__name__)
@@ -287,7 +290,11 @@ class WebSocketsPool:
                                     reason_code, f"+{earned} - {reason_code}"
                                 )
                         elif message.type == "claim-available":
-                            ws.twitch.claim_bonus(
+                            # Don't click the bonus the instant it appears — a
+                            # millisecond-perfect claim is the clearest bot tell.
+                            defer(
+                                action_jitter("MINER_JITTER_CLAIM", 2.0, 12.0),
+                                ws.twitch.claim_bonus,
                                 ws.streamers[streamer_index],
                                 message.data["claim"]["id"],
                             )
@@ -311,12 +318,20 @@ class WebSocketsPool:
                                 message.message["raid"]["id"],
                                 message.message["raid"]["target_login"],
                             )
-                            ws.twitch.update_raid(ws.streamers[streamer_index], raid)
+                            defer(
+                                action_jitter("MINER_JITTER_RAID", 1.0, 5.0),
+                                ws.twitch.update_raid,
+                                ws.streamers[streamer_index],
+                                raid,
+                            )
 
                     elif message.topic == "community-moments-channel-v1":
                         if message.type == "active":
-                            ws.twitch.claim_moment(
-                                ws.streamers[streamer_index], message.data["moment_id"]
+                            defer(
+                                action_jitter("MINER_JITTER_MOMENT", 1.0, 6.0),
+                                ws.twitch.claim_moment,
+                                ws.streamers[streamer_index],
+                                message.data["moment_id"],
                             )
 
                     elif message.topic == "predictions-channel-v1":
@@ -331,7 +346,13 @@ class WebSocketsPool:
                             message.type == "event-created"
                             and event_id not in ws.events_predictions
                         ):
-                            if event_status == "ACTIVE":
+                            if event_status == "ACTIVE" and warmup_blocks_betting():
+                                # New account still warming up -> don't predict yet.
+                                logger.info(
+                                    f"Skipping prediction (account warming up): "
+                                    f"{event_dict['title']}"
+                                )
+                            elif event_status == "ACTIVE":
                                 prediction_window_seconds = float(
                                     event_dict["prediction_window_seconds"]
                                 )
@@ -362,6 +383,14 @@ class WebSocketsPool:
                                         ws.events_predictions[event_id] = event
                                         start_after = event.closing_bet_after(
                                             current_tmsp
+                                        )
+                                        # De-sync the exact bet moment a little.
+                                        # Earlier only (never later) so the bet
+                                        # still lands inside the window.
+                                        start_after = max(
+                                            0.0,
+                                            start_after
+                                            - action_jitter("MINER_JITTER_BET", 0.0, 3.0),
                                         )
 
                                         place_bet_thread = Timer(

@@ -566,7 +566,12 @@ class Twitch(object):
 
                 for index in streamers_watching:
                     # next_iteration = time.time() + 60 / len(streamers_watching)
-                    next_iteration = time.time() + 20 / len(streamers_watching)
+                    # Jitter the watch cadence ~±15% so the minute-watched POSTs
+                    # don't land on a perfectly fixed 20/N-second grid (a bot
+                    # tell), while staying close enough to keep the watch streak.
+                    next_iteration = time.time() + (
+                        random.uniform(0.85, 1.15) * 20 / len(streamers_watching)
+                    )
 
                     try:
                         ####################################

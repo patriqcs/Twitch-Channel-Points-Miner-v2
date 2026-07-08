@@ -5,8 +5,9 @@ import string
 import time
 from copy import deepcopy
 from datetime import datetime, timezone
-from os import path
-from random import choice, randrange
+from os import environ, path
+from random import choice, randrange, uniform
+from threading import Timer
 
 import requests
 from millify import millify
@@ -38,6 +39,80 @@ def new_app_user_agent() -> str:
 def new_web_user_agent() -> str:
     """A random desktop-browser User-Agent for the spade/web-page scrape."""
     return choice(WEB_USER_AGENTS)
+
+
+# --- Behavioural timing jitter ---------------------------------------------
+# Real users don't click a claim/join the millisecond a PubSub event lands, and
+# 25 accounts firing the same action at the same instant is a bot tell. These
+# helpers spread the reactive actions out by a small random delay, run on a
+# daemon Timer so the single-threaded WebSocket message handler never blocks.
+
+def action_jitter(env_name: str, default_lo: float, default_hi: float) -> float:
+    """Random human-like delay (seconds) to defer a reactive action.
+
+    Overridable per action via env var `env_name` as "lo,hi" seconds; set it to
+    "0,0" to disable that action's jitter. Each account draws independently, so
+    the fleet de-synchronises without any shared coordination.
+    """
+    lo, hi = default_lo, default_hi
+    raw = environ.get(env_name, "")
+    if raw:
+        try:
+            parts = [float(x) for x in raw.split(",")]
+            if len(parts) == 2:
+                lo, hi = parts
+        except ValueError:
+            pass
+    if hi <= 0 or hi < lo:
+        return 0.0
+    return uniform(lo, hi)
+
+
+def defer(delay: float, fn, *args) -> None:
+    """Run fn(*args) after `delay` seconds on a daemon timer (non-blocking).
+
+    Used from the WebSocket handler so a jittered claim/join/moment neither
+    blocks message processing nor keeps the process alive on shutdown.
+    """
+    timer = Timer(max(0.0, delay), fn, args)
+    timer.daemon = True
+    timer.start()
+
+
+# --- New-account behavioural warm-up ---------------------------------------
+# A brand-new account behaving like a fully-established one (betting from day
+# one, always present the instant a stream starts) is a risk signal. The backend
+# passes the account's age via MINER_ACCOUNT_AGE_DAYS; a young account holds back
+# and grows into full behaviour. Absent env (standalone mode / old rows) means
+# "unknown age" -> treated as established, so nothing changes for those.
+
+def account_age_days():
+    """Account age in days from the backend, or None if unknown."""
+    raw = environ.get("MINER_ACCOUNT_AGE_DAYS", "")
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def warmup_blocks_betting() -> bool:
+    """True while an account is too new to place predictions.
+
+    Threshold in days via MINER_WARMUP_BET_DAYS (default 7); set 0 to disable.
+    Unknown age -> False (established account, bet as usual).
+    """
+    try:
+        days = float(environ.get("MINER_WARMUP_BET_DAYS", "7"))
+    except ValueError:
+        days = 7.0
+    if days <= 0:
+        return False
+    age = account_age_days()
+    if age is None:
+        return False
+    return age < days
 
 
 def _millify(input, precision=2):

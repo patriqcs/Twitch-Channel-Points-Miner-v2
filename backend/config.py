@@ -80,6 +80,33 @@ PROXY_ALLOW_DIRECT = _bool_env("PROXY_ALLOW_DIRECT", True)
 AUTOSTART_ENABLED = _bool_env("AUTOSTART_ENABLED", True)
 AUTOSTART_MAX_WAIT = int(os.environ.get("AUTOSTART_MAX_WAIT", "180"))  # seconds
 
+# ---- Stream-live gate (anti-detection) ----
+# Every account mines the SAME streamer list, and channel points only accrue
+# while a streamer is actually live. Keeping 25 accounts connected 24/7 while the
+# channel is offline earns nothing and is a bot tell (real viewers are only
+# present during a broadcast). This gate polls the live status centrally (ONE
+# request, not one per account) and runs the accounts ONLY while a streamer is
+# live: it staggers them up when the stream starts and drains them down when it
+# ends. When enabled it REPLACES the plain boot auto-start above.
+#
+# Hysteresis is deliberately asymmetric:
+#   * online  -> react immediately (viewers show up right when the stream starts)
+#   * offline -> only after OFFLINE_CONFIRM consecutive offline polls, so a brief
+#     encoder/stream drop doesn't cycle all accounts.
+#   * poll error -> after FAILOPEN_AFTER consecutive failures, treat as ONLINE
+#     (fail-open): a broken live-check must never silently halt all mining.
+# Start/stop are spread out with a random per-account gap (STEP_MIN..STEP_MAX)
+# so accounts trickle in/out over minutes instead of all switching at once.
+STREAM_GATE_ENABLED = _bool_env("STREAM_GATE_ENABLED", True)
+STREAM_GATE_CHECK_INTERVAL = int(os.environ.get("STREAM_GATE_CHECK_INTERVAL", "60"))    # s
+STREAM_GATE_OFFLINE_CONFIRM = int(os.environ.get("STREAM_GATE_OFFLINE_CONFIRM", "3"))
+STREAM_GATE_FAILOPEN_AFTER = int(os.environ.get("STREAM_GATE_FAILOPEN_AFTER", "3"))
+STREAM_GATE_HTTP_TIMEOUT = int(os.environ.get("STREAM_GATE_HTTP_TIMEOUT", "10"))        # s
+STREAM_GATE_RAMP_STEP_MIN = int(os.environ.get("STREAM_GATE_RAMP_STEP_MIN", "20"))      # s
+STREAM_GATE_RAMP_STEP_MAX = int(os.environ.get("STREAM_GATE_RAMP_STEP_MAX", "90"))      # s
+STREAM_GATE_DRAIN_STEP_MIN = int(os.environ.get("STREAM_GATE_DRAIN_STEP_MIN", "10"))    # s
+STREAM_GATE_DRAIN_STEP_MAX = int(os.environ.get("STREAM_GATE_DRAIN_STEP_MAX", "45"))    # s
+
 # ---- Miner self-repair (watchdog) ----
 # When a miner subprocess for an *enabled* account exits unexpectedly, the
 # reaper restarts it automatically with exponential backoff. A crash-loop guard

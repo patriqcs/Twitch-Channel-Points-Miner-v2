@@ -319,6 +319,11 @@ def main():
     device_id = cfg.get("device_id")
     ua_app = cfg.get("ua_app")
     ua_web = cfg.get("ua_web")
+    # Expose account age to the engine (behavioural warm-up for new accounts).
+    # The engine reads MINER_ACCOUNT_AGE_DAYS via env in its jitter/bet helpers.
+    age_days = cfg.get("account_age_days")
+    if age_days is not None:
+        os.environ["MINER_ACCOUNT_AGE_DAYS"] = str(age_days)
     if not streamer_names:
         report(username, "status", reason="error", message="no streamers configured")
         print("No streamers configured.")

@@ -19,6 +19,7 @@ from backend.db import init_db
 from backend.manager import manager
 from backend.proxy_monitor import ProxyHealthMonitor
 from backend.watch_monitor import WatchHealthMonitor
+from backend.stream_gate import StreamGateMonitor
 from backend.heist_manager import heist_manager
 from backend.chat_redeem_manager import chat_redeem_manager
 from backend.web_redeem_manager import web_redeem_manager
@@ -35,6 +36,7 @@ logger = logging.getLogger("backend")
 
 proxy_monitor = ProxyHealthMonitor(manager)
 watch_monitor = WatchHealthMonitor(manager)
+stream_gate = StreamGateMonitor(manager)
 
 
 def _reset_statuses_to_stopped() -> None:
@@ -154,7 +156,15 @@ async def lifespan(app: FastAPI):
         chat_redeem_manager.start()
     if config.WEBREDEEM_COORDINATOR_ENABLED:
         web_redeem_manager.start()
-    if config.AUTOSTART_ENABLED:
+    # The stream-gate REPLACES the plain boot auto-start: it runs the accounts
+    # only while a streamer is live (staggering them up/down). Fall back to the
+    # unconditional auto-start only when the gate is disabled.
+    if config.STREAM_GATE_ENABLED:
+        stream_gate.start()
+        logger.info(
+            "Stream-gate armed: accounts run only while a configured streamer is live."
+        )
+    elif config.AUTOSTART_ENABLED:
         _autostart_when_ready()
         logger.info("Auto-start armed (waits until proxies reachable, max %ss).",
                     config.AUTOSTART_MAX_WAIT)
@@ -169,6 +179,8 @@ async def lifespan(app: FastAPI):
             chat_redeem_manager.stop()
         if config.HEIST_COORDINATOR_ENABLED:
             heist_manager.stop()
+        if config.STREAM_GATE_ENABLED:
+            stream_gate.stop()
         watch_monitor.stop()
         proxy_monitor.stop()
         manager.shutdown()

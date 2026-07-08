@@ -1,5 +1,30 @@
 # STAND — Web-Redeem (Stand: 2026-07-04)
 
+## Neu (2026-07-08, Anti-Detection, implementiert + lokal getestet, NICHT deployed)
+
+Drei Ebenen gegen Bot-Erkennung (Kontext: Ban-Welle 08.07., alle Alts gesperrt):
+
+- **Stream-Live-Gate** (`backend/stream_gate.py`, ersetzt den blinden Boot-
+  Autostart): Accounts laufen NUR NOCH, wenn ein konfigurierter Streamer wirklich
+  live ist. Zentraler Live-Poll (EIN Request, nicht pro Account) via GQL; geht der
+  Stream live → Accounts **gestaffelt** hochfahren, geht er offline → gestaffelt
+  runterfahren. Asymmetrische Hysterese: online sofort, offline erst nach 3 Checks
+  (~3 Min, gegen kurze Stream-Drops), Poll-Fehler → fail-open (Mining läuft
+  weiter). **Wichtig für Betrieb:** Wenn der Kanal offline ist, sind die Accounts
+  jetzt bewusst gestoppt — das ist gewollt, kein Fehler.
+  ENV: `STREAM_GATE_ENABLED` (Default true), `STREAM_GATE_CHECK_INTERVAL` (60s),
+  `STREAM_GATE_OFFLINE_CONFIRM` (3), `STREAM_GATE_FAILOPEN_AFTER` (3),
+  `STREAM_GATE_RAMP_STEP_MIN/MAX` (20/90s), `STREAM_GATE_DRAIN_STEP_MIN/MAX` (10/45s).
+- **Timing-Jitter** (Engine): Bonus-Claim (bisher sofort/ms → 2–12s, größter Tell),
+  Raid-Join (1–5s), Moment-Claim (1–6s) laufen jetzt verzögert über daemon-Timer
+  (blockieren den WS-Handler nicht); Watch-Kadenz ±15% statt fixem 20/N-Raster;
+  Bet-Zeitpunkt leicht früher-jittered. Jeder Account würfelt unabhängig →
+  De-Synchronisierung. ENV: `MINER_JITTER_CLAIM/RAID/MOMENT/BET` je als „lo,hi".
+- **Warm-up für neue Accounts** (`created_at` → `internal.py` →
+  `MINER_ACCOUNT_AGE_DAYS`): frische Accounts wetten die ersten Tage NICHT
+  (`MINER_WARMUP_BET_DAYS`, Default 7) und kommen im Stream-Gate-Ramp später dran
+  (ältere zuerst). Unbekanntes Alter → als etabliert behandelt (kein Effekt).
+
 ## Neu (2026-07-04, implementiert, noch NICHT committet/deployed)
 
 - **Offener Zugang (ohne Login)**: Checkbox auf der Manager-Seite
