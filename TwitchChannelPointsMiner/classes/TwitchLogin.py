@@ -37,7 +37,7 @@ class _TimeoutHTTPAdapter(HTTPAdapter):
         if kwargs.get("timeout") is None:
             kwargs["timeout"] = self._timeout
         return super().send(request, **kwargs)
-from TwitchChannelPointsMiner.constants import CLIENT_ID, GQLOperations, USER_AGENTS
+from TwitchChannelPointsMiner.constants import CLIENT_ID, GQLOperations
 
 from datetime import datetime, timedelta, timezone
 from time import sleep
@@ -62,6 +62,7 @@ class TwitchLogin(object):
     __slots__ = [
         "client_id",
         "device_id",
+        "user_agent",
         "token",
         "login_check_result",
         "session",
@@ -76,6 +77,7 @@ class TwitchLogin(object):
     def __init__(self, client_id, device_id, username, user_agent, password=None, proxy=None):
         self.client_id = client_id
         self.device_id = device_id
+        self.user_agent = user_agent
         self.token = None
         self.login_check_result = False
         self.session = requests.session()
@@ -235,7 +237,7 @@ class TwitchLogin(object):
             "Origin": "https://android.tv.twitch.tv",
             "Pragma": "no-cache",
             "Referer": "https://android.tv.twitch.tv/",
-            "User-Agent": USER_AGENTS["Android"]["TV"],
+            "User-Agent": self.user_agent,
             "X-Device-Id": self.device_id
         },)
         return response

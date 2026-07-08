@@ -30,6 +30,44 @@ USER_AGENTS = {
     }
 }
 
+# Per-account fingerprint pools.
+#
+# Every account authenticates with the TV CLIENT_ID above, so its app User-Agent
+# must be a Twitch *Android TV app* string (tv.twitch.android.app) to stay
+# internally consistent — a browser UA paired with the TV client id is itself a
+# tell. These are realistic Android-TV devices/app builds; one is picked and
+# persisted per account (backend/models.py) so each account presents a distinct
+# but coherent device. Append-only: reordering would reshuffle picks for rows
+# generated before the change, but persisted values are read from the DB anyway.
+TV_APP_USER_AGENTS = [
+    "Dalvik/2.1.0 (Linux; U; Android 11; SHIELD Android TV Build/RQ1A.210105.003) tv.twitch.android.app/16.9.1/1609010",
+    "Dalvik/2.1.0 (Linux; U; Android 9; SHIELD Android TV Build/PPR1.180610.011) tv.twitch.android.app/15.1.1/1501010",
+    "Dalvik/2.1.0 (Linux; U; Android 12; Chromecast Build/STTL.240206.002) tv.twitch.android.app/17.6.1/1706010",
+    "Dalvik/2.1.0 (Linux; U; Android 10; BRAVIA 4K GB Build/QTG3.200305.006) tv.twitch.android.app/16.0.1/1600010",
+    "Dalvik/2.1.0 (Linux; U; Android 11; BRAVIA VH2 Build/RTT1.211125.001) tv.twitch.android.app/17.2.0/1702000",
+    "Dalvik/2.1.0 (Linux; U; Android 9; MIBOX4 Build/PI) tv.twitch.android.app/15.7.0/1507000",
+    "Dalvik/2.1.0 (Linux; U; Android 9; MiTV-MSSP1 Build/PPR1.180610.011) tv.twitch.android.app/16.4.0/1604000",
+    "Dalvik/2.1.0 (Linux; U; Android 11; G20 Build/RTT1.220306.007) tv.twitch.android.app/18.1.0/1801000",
+    "Dalvik/2.1.0 (Linux; U; Android 10; PH7M_EU_5596 Build/QTG3.200305.006) tv.twitch.android.app/17.6.1/1706010",
+    "Dalvik/2.1.0 (Linux; U; Android 10; Streaming Box 8000 Build/QTG3.200305.006) tv.twitch.android.app/18.5.2/1805020",
+]
+
+# Desktop-browser User-Agents for the ONE web-facing request the miner makes:
+# scraping the streamer's web page + settings JS to find spade_url
+# (Twitch.get_spade_url). That page is only served to a browser, so this pool is
+# desktop browsers (not the TV app). Also picked/persisted per account so this
+# secondary surface varies too instead of every account sharing one fixed UA.
+WEB_USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:122.0) Gecko/20100101 Firefox/122.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64; rv:121.0) Gecko/20100101 Firefox/121.0",
+]
+
 BRANCH = "master"
 GITHUB_url = (
     "https://raw.githubusercontent.com/rdavydov/Twitch-Channel-Points-Miner-v2/"

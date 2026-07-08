@@ -314,6 +314,11 @@ def main():
     cfg = fetch_config(username)
     streamer_names = cfg.get("streamers") or []
     proxy = cfg.get("proxy")
+    # Persistent per-account client fingerprint from the backend. Absent in the
+    # standalone/ENV fallback -> the miner generates a coherent default itself.
+    device_id = cfg.get("device_id")
+    ua_app = cfg.get("ua_app")
+    ua_web = cfg.get("ua_web")
     if not streamer_names:
         report(username, "status", reason="error", message="no streamers configured")
         print("No streamers configured.")
@@ -332,6 +337,9 @@ def main():
     miner = TwitchChannelPointsMiner(
         username=username,
         proxy=proxy,
+        user_agent=ua_app,
+        web_user_agent=ua_web,
+        device_id=device_id,
         claim_drops_startup=True,
         priority=[Priority.STREAK, Priority.DROPS, Priority.ORDER],
         enable_analytics=False,

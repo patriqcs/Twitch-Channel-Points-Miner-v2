@@ -138,6 +138,11 @@ class AccountRead(BaseModel):
     heist_joiner: bool = False
     chat_redeemer: bool = False
     web_redeemer: bool = False
+    # Read-only per-account client fingerprint (assigned at creation, fixed for
+    # the account's lifetime). Exposed for transparency in the manager UI.
+    device_id: Optional[str] = None
+    ua_app: Optional[str] = None
+    ua_web: Optional[str] = None
     created_at: datetime
     last_login_at: Optional[datetime] = None
 

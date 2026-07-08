@@ -10,6 +10,12 @@ from typing import List, Optional
 
 from sqlmodel import Field, Relationship, SQLModel
 
+from TwitchChannelPointsMiner.utils import (
+    new_app_user_agent,
+    new_device_id,
+    new_web_user_agent,
+)
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -54,6 +60,17 @@ class Account(SQLModel, table=True):
     # the public redeem website (backend/web_redeem_manager.py) — same
     # richest-free rotation as chat_redeemer, but selectable independently.
     web_redeemer: bool = False
+    # Per-account client fingerprint, generated ONCE at creation and then fixed
+    # for this account's lifetime (a stable device is far less suspicious than
+    # the old behaviour, which re-randomised device_id on every process start).
+    # Deliberately NOT touched by rename/update so it survives a Twitch name
+    # change. device_id -> X-Device-Id header; ua_app -> Android-TV app
+    # User-Agent for all auth/GQL traffic (matches the TV client id);
+    # ua_web -> desktop-browser User-Agent for the spade/web-page scrape.
+    # Optional[str] so pre-existing rows (NULL) are tolerated until backfilled.
+    device_id: Optional[str] = Field(default_factory=new_device_id)
+    ua_app: Optional[str] = Field(default_factory=new_app_user_agent)
+    ua_web: Optional[str] = Field(default_factory=new_web_user_agent)
     created_at: datetime = Field(default_factory=utcnow)
     last_login_at: Optional[datetime] = None
 

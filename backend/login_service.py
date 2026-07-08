@@ -62,11 +62,18 @@ class LoginService:
         with self._lock:
             self._states.pop(username, None)
 
-    def start(self, username: str, proxy=None) -> LoginState:
-        """Begin a device-code login. Returns the state with user_code set."""
+    def start(self, username: str, proxy=None, device_id=None,
+              user_agent=None) -> LoginState:
+        """Begin a device-code login. Returns the state with user_code set.
+
+        device_id/user_agent are the account's persistent fingerprint (from the
+        DB) so the login presents the SAME device as the miner will; both fall
+        back to a generated value when not supplied."""
         config.ensure_dirs()
-        login = TwitchLogin(CLIENT_ID, _device_id(), username,
-                            get_user_agent("CHROME"), proxy=proxy)
+        login = TwitchLogin(
+            CLIENT_ID, device_id or _device_id(), username,
+            user_agent or get_user_agent("CHROME"), proxy=proxy,
+        )
 
         resp = login.send_oauth_request(
             DEVICE_URL, {"client_id": CLIENT_ID, "scopes": SCOPES}

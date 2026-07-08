@@ -27,8 +27,8 @@ from TwitchChannelPointsMiner.utils import (
     _millify,
     at_least_one_value_in_settings_is,
     check_versions,
-    get_user_agent,
     internet_connection_available,
+    new_app_user_agent,
     set_default_settings,
 )
 
@@ -83,6 +83,13 @@ class TwitchChannelPointsMiner:
         # Optional proxy for ALL traffic of this account (HTTP requests + WebSocket).
         # Accepts a Proxy instance, a URL string ("socks5://user:pass@host:1080"), or None.
         proxy=None,
+        # Persistent per-account client fingerprint (from the backend DB). When
+        # None a coherent default is generated so standalone run.py/example.py
+        # still work. user_agent = Android-TV app UA (auth/GQL), web_user_agent =
+        # desktop-browser UA (spade scrape), device_id = X-Device-Id.
+        user_agent: str = None,
+        web_user_agent: str = None,
+        device_id: str = None,
         # Settings for logging and selenium as you can see.
         priority: list = [Priority.STREAK, Priority.DROPS, Priority.ORDER],
         # This settings will be global shared trought Settings class
@@ -146,9 +153,14 @@ class TwitchChannelPointsMiner:
         streamer_settings.bet.default()
         Settings.streamer_settings = streamer_settings
 
-        # user_agent = get_user_agent("FIREFOX")
-        user_agent = get_user_agent("CHROME")
-        self.twitch = Twitch(self.username, user_agent, password, proxy=proxy)
+        # Fall back to a freshly generated coherent fingerprint when the caller
+        # (e.g. standalone run.py) didn't supply the account's persisted one.
+        if user_agent is None:
+            user_agent = new_app_user_agent()
+        self.twitch = Twitch(
+            self.username, user_agent, password, proxy=proxy,
+            web_user_agent=web_user_agent, device_id=device_id,
+        )
 
         self.claim_drops_startup = claim_drops_startup
         self.priority = priority if isinstance(priority, list) else [priority]

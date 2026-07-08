@@ -44,7 +44,15 @@ def get_config(username: str, session: Session = Depends(get_session)):
     if not acc.no_proxy and acc.proxy_id is not None:
         proxy = proxy_url(session.get(Proxy, acc.proxy_id))
 
-    return {"username": username, "streamers": streamers, "proxy": proxy}
+    return {
+        "username": username,
+        "streamers": streamers,
+        "proxy": proxy,
+        # Persistent per-account client fingerprint (see backend/models.py).
+        "device_id": acc.device_id,
+        "ua_app": acc.ua_app,
+        "ua_web": acc.ua_web,
+    }
 
 
 class EventIn(BaseModel):

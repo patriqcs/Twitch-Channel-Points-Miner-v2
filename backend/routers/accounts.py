@@ -21,6 +21,7 @@ def _to_read(a: Account) -> AccountRead:
         no_proxy=a.no_proxy,
         heist_opener=a.heist_opener, heist_joiner=a.heist_joiner,
         chat_redeemer=a.chat_redeemer, web_redeemer=a.web_redeemer,
+        device_id=a.device_id, ua_app=a.ua_app, ua_web=a.ua_web,
         created_at=a.created_at, last_login_at=a.last_login_at,
     )
 
@@ -202,7 +203,8 @@ def restart_account(account_id: int, session: Session = Depends(get_session)):
 def start_login(account_id: int, session: Session = Depends(get_session)):
     acc = _get(session, account_id)
     proxy = to_engine_proxy(session.get(Proxy, acc.proxy_id)) if acc.proxy_id else None
-    state = login_service.start(acc.username, proxy=proxy)
+    state = login_service.start(acc.username, proxy=proxy,
+                                device_id=acc.device_id, user_agent=acc.ua_app)
     if state.status == "error":
         raise HTTPException(502, state.error or "login start failed")
     return {
@@ -244,8 +246,8 @@ def login_test(account_id: int, session: Session = Depends(get_session)):
     from TwitchChannelPointsMiner.utils import get_user_agent
 
     proxy = to_engine_proxy(session.get(Proxy, acc.proxy_id)) if acc.proxy_id else None
-    login = TwitchLogin(CLIENT_ID, "x" * 32, acc.username,
-                        get_user_agent("CHROME"), proxy=proxy)
+    login = TwitchLogin(CLIENT_ID, acc.device_id or "x" * 32, acc.username,
+                        acc.ua_app or get_user_agent("CHROME"), proxy=proxy)
     try:
         login.load_cookies(str(cookie))
         login.set_token(login.get_auth_token())

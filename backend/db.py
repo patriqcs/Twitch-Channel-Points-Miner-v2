@@ -50,6 +50,11 @@ def _ensure_columns() -> None:
             "no_proxy": "BOOLEAN NOT NULL DEFAULT 0",
             "chat_redeemer": "BOOLEAN NOT NULL DEFAULT 0",
             "web_redeemer": "BOOLEAN NOT NULL DEFAULT 0",
+            # Per-account client fingerprint (added nullable; existing rows are
+            # backfilled with a generated value by _backfill_fingerprints()).
+            "device_id": "VARCHAR",
+            "ua_app": "VARCHAR",
+            "ua_web": "VARCHAR",
         },
         # existing website users predate self-registration -> keep them approved
         "webuser": {
@@ -65,6 +70,44 @@ def _ensure_columns() -> None:
             for name, ddl in columns.items():
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
+def _backfill_fingerprints() -> None:
+    """Give pre-existing accounts a persistent client fingerprint.
+
+    ADD COLUMN leaves old rows NULL; generate a coherent (device_id, ua_app,
+    ua_web) triple for each so they too present a stable per-account device
+    instead of falling back to the shared default. Idempotent: only rows still
+    missing a value are touched, so it never reshuffles an assigned fingerprint.
+    """
+    from sqlalchemy import text
+    from TwitchChannelPointsMiner.utils import (
+        new_app_user_agent,
+        new_device_id,
+        new_web_user_agent,
+    )
+
+    with engine.begin() as conn:
+        rows = conn.execute(text(
+            "SELECT id FROM account "
+            "WHERE device_id IS NULL OR ua_app IS NULL OR ua_web IS NULL"
+        )).fetchall()
+        for (account_id,) in rows:
+            conn.execute(
+                text(
+                    "UPDATE account SET "
+                    "device_id = COALESCE(device_id, :dev), "
+                    "ua_app = COALESCE(ua_app, :app), "
+                    "ua_web = COALESCE(ua_web, :web) "
+                    "WHERE id = :id"
+                ),
+                {
+                    "dev": new_device_id(),
+                    "app": new_app_user_agent(),
+                    "web": new_web_user_agent(),
+                    "id": account_id,
+                },
+            )
 
 
 def _ensure_indexes() -> None:
@@ -86,6 +129,7 @@ def _ensure_indexes() -> None:
 def init_db() -> None:
     SQLModel.metadata.create_all(engine)
     _ensure_columns()
+    _backfill_fingerprints()
     _ensure_indexes()
 
 

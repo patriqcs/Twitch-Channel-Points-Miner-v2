@@ -1,16 +1,43 @@
 import platform
 import re
 import socket
+import string
 import time
 from copy import deepcopy
 from datetime import datetime, timezone
 from os import path
-from random import randrange
+from random import choice, randrange
 
 import requests
 from millify import millify
 
-from TwitchChannelPointsMiner.constants import USER_AGENTS, GITHUB_url
+from TwitchChannelPointsMiner.constants import (
+    TV_APP_USER_AGENTS,
+    USER_AGENTS,
+    WEB_USER_AGENTS,
+    GITHUB_url,
+)
+
+
+# --- Per-account fingerprint generators -----------------------------------
+# Called once when an account is created (backend/models.py default_factory)
+# and the result is PERSISTED in the DB, so every account keeps one stable,
+# coherent device identity for its whole lifetime (survives restarts and
+# renames). See constants.TV_APP_USER_AGENTS / WEB_USER_AGENTS for the pools.
+
+def new_device_id() -> str:
+    """A fresh 32-char alphanumeric X-Device-Id (one per account, persisted)."""
+    return "".join(choice(string.ascii_letters + string.digits) for _ in range(32))
+
+
+def new_app_user_agent() -> str:
+    """A random Android-TV app User-Agent (consistent with the TV CLIENT_ID)."""
+    return choice(TV_APP_USER_AGENTS)
+
+
+def new_web_user_agent() -> str:
+    """A random desktop-browser User-Agent for the spade/web-page scrape."""
+    return choice(WEB_USER_AGENTS)
 
 
 def _millify(input, precision=2):

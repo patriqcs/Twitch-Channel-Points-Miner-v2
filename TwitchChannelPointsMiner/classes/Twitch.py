@@ -48,6 +48,7 @@ from TwitchChannelPointsMiner.utils import (
     _millify,
     create_chunks,
     internet_connection_available,
+    new_web_user_agent,
 )
 
 logger = logging.getLogger(__name__)
@@ -81,6 +82,7 @@ class Twitch(object):
     __slots__ = [
         "cookies_file",
         "user_agent",
+        "web_user_agent",
         "twitch_login",
         "running",
         "device_id",
@@ -93,7 +95,8 @@ class Twitch(object):
         "session",
     ]
 
-    def __init__(self, username, user_agent, password=None, proxy=None):
+    def __init__(self, username, user_agent, password=None, proxy=None,
+                 web_user_agent=None, device_id=None):
         # Honor COOKIES_DIR so the engine loads/saves cookies in the same place
         # the backend does (default: cwd/cookies == DATA_DIR/cookies).
         cookies_path = os.environ.get("COOKIES_DIR") or os.path.join(
@@ -102,6 +105,10 @@ class Twitch(object):
         Path(cookies_path).mkdir(parents=True, exist_ok=True)
         self.cookies_file = os.path.join(cookies_path, f"{username}.pkl")
         self.user_agent = user_agent
+        # Desktop-browser UA used ONLY for the web-page/settings scrape in
+        # get_spade_url (that page isn't served to the TV app UA). Persisted per
+        # account like user_agent; generated on the fly for standalone callers.
+        self.web_user_agent = web_user_agent or new_web_user_agent()
         # dict for the requests `proxies=` argument, or None when no proxy is set.
         self.proxies = proxy.requests_proxies if proxy is not None else None
         # Shared HTTP session with automatic retry/backoff. The per-account
@@ -125,7 +132,10 @@ class Twitch(object):
         _adapter = _TimeoutHTTPAdapter(max_retries=_retry, timeout=DEFAULT_HTTP_TIMEOUT)
         self.session.mount("http://", _adapter)
         self.session.mount("https://", _adapter)
-        self.device_id = "".join(
+        # Use the account's persisted device id when supplied; otherwise fall
+        # back to a fresh one (standalone callers). A stable id per account is
+        # less suspicious than the old per-start re-randomisation.
+        self.device_id = device_id or "".join(
             choice(string.ascii_letters + string.digits) for _ in range(32)
         )
         self.twitch_login = TwitchLogin(
@@ -189,11 +199,12 @@ class Twitch(object):
 
     def get_spade_url(self, streamer):
         try:
-            # fixes AttributeError: 'NoneType' object has no attribute 'group'
-            # headers = {"User-Agent": self.user_agent}
-            from TwitchChannelPointsMiner.constants import USER_AGENTS
-
-            headers = {"User-Agent": USER_AGENTS["Linux"]["FIREFOX"]}
+            # The web page + settings JS (where spade_url lives) is only served
+            # to a browser UA, not the TV app UA (self.user_agent) — using the
+            # app UA here returns a page without the settings match and raises
+            # AttributeError on .group(). Use this account's persistent
+            # desktop-browser UA so the scrape works AND still varies per account.
+            headers = {"User-Agent": self.web_user_agent}
 
             main_page_request = self.session.get(
                 streamer.streamer_url, headers=headers, proxies=self.proxies)
