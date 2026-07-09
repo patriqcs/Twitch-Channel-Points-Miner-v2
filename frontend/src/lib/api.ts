@@ -171,6 +171,8 @@ export interface PredictionConfig {
   exclude: string;
   spacing_min: number;
   spacing_max: number;
+  bet_pct_min: number;
+  bet_pct_max: number;
 }
 
 export interface PredictionRun {

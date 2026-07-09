@@ -417,12 +417,18 @@ def account_creds(session: Session, account: Account):
     return token, proxies
 
 
-def _gql(token, proxies, operation_name, query, variables, timeout=15):
+def _gql(token, proxies, operation_name, query, variables, timeout=15,
+         extra_headers=None):
     headers = {
         "Content-Type": "application/json",
         "Client-Id": TWITCH_WEB_CLIENT_ID,
         "Authorization": f"OAuth {token}",
     }
+    # Optionaler Fingerabdruck (Client-Id/User-Agent/X-Device-Id ...), damit der
+    # Request zur TV-Signatur des Accounts passt, mit der sein Token ausgestellt
+    # wurde. Überschreibt bei Bedarf auch die Default-Client-Id.
+    if extra_headers:
+        headers.update(extra_headers)
     body = {"operationName": operation_name, "query": query, "variables": variables}
     try:
         resp = requests.post(GQL_ENDPOINT, json=body, headers=headers,
@@ -448,10 +454,11 @@ def _gql(token, proxies, operation_name, query, variables, timeout=15):
     return data
 
 
-def fetch_channel_points(token, proxies, channel_login: str) -> dict:
+def fetch_channel_points(token, proxies, channel_login: str,
+                         extra_headers=None) -> dict:
     """Return {channelId, displayName, balance, rewards:[...]} for a channel."""
     data = _gql(token, proxies, "ChannelPointsContext", _CHANNEL_POINTS_QUERY,
-                {"channelLogin": channel_login})
+                {"channelLogin": channel_login}, extra_headers=extra_headers)
     community = data.get("community")
     if not community:
         raise RedeemError(f'channel "{channel_login}" not found')

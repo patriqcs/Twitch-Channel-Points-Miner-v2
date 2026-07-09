@@ -393,6 +393,25 @@ export default function Predictions() {
                 onChange={(e) => setCfg({ ...cfg, spacing_max: Number(e.target.value) })}
               />
             </Field>
+            <Field label="Einsatz min (%)" hint="min. Anteil des Guthabens pro Account">
+              <Input
+                type="number"
+                value={String(cfg.bet_pct_min)}
+                onChange={(e) => setCfg({ ...cfg, bet_pct_min: Number(e.target.value) })}
+              />
+            </Field>
+            <Field label="Einsatz max (%)" hint="max. Anteil des Guthabens pro Account">
+              <Input
+                type="number"
+                value={String(cfg.bet_pct_max)}
+                onChange={(e) => setCfg({ ...cfg, bet_pct_max: Number(e.target.value) })}
+              />
+            </Field>
+          </div>
+          <div className="text-xs text-zinc-500">
+            Anti-Detection: unterschiedliche Einsatz-Höhen (z.B. 70–100 %) und ein
+            breiteres Zeitfenster lassen die Accounts weniger nach koordiniertem Bot
+            aussehen. 100/100 = echtes All-in.
           </div>
           <Button variant="outline" onClick={saveCfg}>
             Speichern

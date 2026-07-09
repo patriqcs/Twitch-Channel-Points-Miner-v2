@@ -42,9 +42,36 @@ CHANNEL_KEY = "PREDICTION_CHANNEL"
 EXCLUDE_KEY = "PREDICTION_EXCLUDE"
 SPACING_MIN_KEY = "PREDICTION_SPACING_MIN"
 SPACING_MAX_KEY = "PREDICTION_SPACING_MAX"
+# Anti-Detection: Einsatz pro Account als zufälliger Prozentsatz des Guthabens
+# (nicht immer 100% All-in -> weniger auffälliges „alle volle Kanne"-Muster).
+BET_PCT_MIN_KEY = "PREDICTION_BET_PCT_MIN"
+BET_PCT_MAX_KEY = "PREDICTION_BET_PCT_MAX"
 
 # Der Haupt-Account wettet nie mit (kommasepariert erweiterbar im UI).
 DEFAULT_EXCLUDE = "patriqcs"
+
+# --- Fingerabdruck: die TV-Miner-Signatur nachbilden --------------------------
+# Die Account-Tokens sind für den Android-TV-Client ausgestellt; der Miner sendet
+# auf allen GQL-Requests TV-Client-Id + ua_app + X-Device-Id. Damit die Wett-/
+# Guthaben-Requests aus dem Backend NICHT von der normalen Miner-Signatur des
+# Accounts abweichen (sonst python-requests-UA + Web-Client-Id ohne Geräte-Id),
+# präsentieren wir den Token genauso. Live verifiziert: TV-Signatur wird für
+# ChannelPointsContext, ActivePredictionEvents und MakePrediction akzeptiert.
+TV_CLIENT_ID = "ue6666qo983tsx6so1t0vnawi233wa"
+CLIENT_VERSION = "ef928475-9403-42f2-8a34-55784bd08e16"
+# Wie der Miner: eine zufällige Session-Id pro Prozess (nicht pro Request).
+_CLIENT_SESSION_ID = token_hex(16)
+
+
+def fp_headers(device_id: "str | None", user_agent: "str | None") -> dict:
+    """TV-Signatur-Header für einen Account (Client-Id/UA/X-Device-Id ...)."""
+    h = {"Client-Id": TV_CLIENT_ID, "Client-Version": CLIENT_VERSION,
+         "Client-Session-Id": _CLIENT_SESSION_ID}
+    if user_agent:
+        h["User-Agent"] = user_agent
+    if device_id:
+        h["X-Device-Id"] = device_id
+    return h
 
 # Twitch-Limits pro Wette und Account
 MIN_BET = 10
@@ -75,11 +102,17 @@ def get_config(session: Session) -> dict:
             return max(0.0, float(_get_setting(session, key, default) or default))
         except (TypeError, ValueError):
             return float(default)
+    def _pct(key, default):
+        return max(1.0, min(100.0, _num(key, default)))
     return {
         "channel": (_get_setting(session, CHANNEL_KEY, "") or "").strip().lower(),
         "exclude": _get_setting(session, EXCLUDE_KEY, DEFAULT_EXCLUDE) or "",
-        "spacing_min": _num(SPACING_MIN_KEY, 1.0),
-        "spacing_max": _num(SPACING_MAX_KEY, 4.0),
+        # Default-Fenster bewusst breiter als früher (war 1–4s): weniger
+        # zeitlich geballtes „alle gleichzeitig"-Signal.
+        "spacing_min": _num(SPACING_MIN_KEY, 3.0),
+        "spacing_max": _num(SPACING_MAX_KEY, 15.0),
+        "bet_pct_min": _pct(BET_PCT_MIN_KEY, 70.0),
+        "bet_pct_max": _pct(BET_PCT_MAX_KEY, 100.0),
     }
 
 
@@ -108,6 +141,8 @@ def eligible_accounts(session: Session, cfg: "dict | None" = None) -> list:
             "id": acc.id, "username": acc.username,
             "logged_in": token is not None,
             "token": token, "proxies": proxies,
+            # pro-Account-Fingerabdruck für die TV-Signatur der Requests
+            "device_id": acc.device_id, "ua_app": acc.ua_app,
         })
     out.sort(key=lambda r: r["username"].lower())
     return out
@@ -161,13 +196,14 @@ mutation AcceptPredictionTermsMutation($input: UpdateUserPredictionSettingsInput
   }
 }"""
 
-def accept_tos(token, proxies) -> bool:
+def accept_tos(token, proxies, device_id=None, user_agent=None) -> bool:
     """Akzeptiert die Wett-AGB für diesen Account. True bei Erfolg/bereits ok."""
     try:
         data = redeem._gql(token, proxies, "AcceptPredictionTermsMutation",
                            _ACCEPT_TOS_MUTATION,
                            {"input": {"hasAcceptedTOS": True,
-                                      "isTemporaryChatBadgeEnabled": True}})
+                                      "isTemporaryChatBadgeEnabled": True}},
+                           extra_headers=fp_headers(device_id, user_agent))
     except redeem.RedeemError as e:
         logger.warning("prediction: AGB-Zustimmung fehlgeschlagen: %s", e)
         return False
@@ -208,13 +244,15 @@ _ERROR_MESSAGES = {
 TOS_BLOCKED_CODE = "MUST_ACCEPT_TOS"
 
 
-def _post_gql(token, proxies, body, timeout=15):
+def _post_gql(token, proxies, body, timeout=15, extra_headers=None):
     """Wie redeem._gql, aber mit fertigem Request-Body (für persistedQuery)."""
     headers = {
         "Content-Type": "application/json",
         "Client-Id": redeem.TWITCH_WEB_CLIENT_ID,
         "Authorization": f"OAuth {token}",
     }
+    if extra_headers:
+        headers.update(extra_headers)
     try:
         resp = requests.post(redeem.GQL_ENDPOINT, json=body, headers=headers,
                              proxies=proxies, timeout=timeout)
@@ -265,10 +303,12 @@ def _parse_event(ev: dict) -> dict:
     }
 
 
-def fetch_active_prediction(token, proxies, channel_login: str) -> dict:
+def fetch_active_prediction(token, proxies, channel_login: str,
+                            device_id=None, user_agent=None) -> dict:
     """Liefert {channel_id, display_name, event|None} für einen Kanal."""
     data = redeem._gql(token, proxies, "ActivePredictionEvents",
-                       _ACTIVE_PREDICTION_QUERY, {"channelLogin": channel_login})
+                       _ACTIVE_PREDICTION_QUERY, {"channelLogin": channel_login},
+                       extra_headers=fp_headers(device_id, user_agent))
     community = data.get("community")
     if not community:
         raise redeem.RedeemError(f'Kanal "{channel_login}" nicht gefunden')
@@ -285,7 +325,7 @@ def fetch_active_prediction(token, proxies, channel_login: str) -> dict:
 
 
 def _make_prediction_once(token, proxies, event_id: str, outcome_id: str,
-                          points: int) -> dict:
+                          points: int, extra_headers=None) -> dict:
     variables = {"input": {
         "eventID": event_id,
         "outcomeID": outcome_id,
@@ -300,13 +340,14 @@ def _make_prediction_once(token, proxies, event_id: str, outcome_id: str,
         }},
     }
     try:
-        data = _post_gql(token, proxies, body)
+        data = _post_gql(token, proxies, body, extra_headers=extra_headers)
     except redeem.RedeemError as e:
         if "PersistedQueryNotFound" not in str(e):
             return {"ok": False, "message": str(e)}
         try:
             data = redeem._gql(token, proxies, "MakePrediction",
-                               _MAKE_PREDICTION_MUTATION, variables)
+                               _MAKE_PREDICTION_MUTATION, variables,
+                               extra_headers=extra_headers)
         except redeem.RedeemError as e2:
             return {"ok": False, "message": str(e2)}
     result = (data or {}).get("makePrediction") or {}
@@ -319,17 +360,19 @@ def _make_prediction_once(token, proxies, event_id: str, outcome_id: str,
 
 
 def make_prediction(token, proxies, event_id: str, outcome_id: str,
-                    points: int) -> dict:
+                    points: int, device_id=None, user_agent=None) -> dict:
     """Setzt `points` auf ein Ergebnis. Returns {ok, message?, code?}.
 
     Bei MUST_ACCEPT_TOS wird die Wett-AGB einmalig automatisch akzeptiert
     (updateUserPredictionSettings) und der Einsatz einmal wiederholt — frische
     Accounts wetten dadurch ohne manuellen Website-Login.
     """
-    r = _make_prediction_once(token, proxies, event_id, outcome_id, points)
-    if r.get("code") == TOS_BLOCKED_CODE and accept_tos(token, proxies):
+    fp = fp_headers(device_id, user_agent)
+    r = _make_prediction_once(token, proxies, event_id, outcome_id, points, fp)
+    if r.get("code") == TOS_BLOCKED_CODE and accept_tos(token, proxies,
+                                                        device_id, user_agent):
         logger.info("prediction: Wett-AGB automatisch akzeptiert -> neuer Versuch")
-        r = _make_prediction_once(token, proxies, event_id, outcome_id, points)
+        r = _make_prediction_once(token, proxies, event_id, outcome_id, points, fp)
     return r
 
 
@@ -341,7 +384,9 @@ def fetch_balances(candidates: list, channel: str, max_workers: int = 8) -> dict
         if not c["token"]:
             return c["id"], None, "kein Login"
         try:
-            state = redeem.fetch_channel_points(c["token"], c["proxies"], channel)
+            state = redeem.fetch_channel_points(
+                c["token"], c["proxies"], channel,
+                extra_headers=fp_headers(c.get("device_id"), c.get("ua_app")))
             return c["id"], int(state.get("balance") or 0), None
         except redeem.RedeemError as e:
             return c["id"], None, str(e)
@@ -394,8 +439,14 @@ def _log_event(account_id: int, channel: str, points: "int | None",
 
 
 def start_run(channel: str, event: dict, outcome_id: str, candidates: list,
-              spacing_min: float, spacing_max: float) -> str:
-    """Startet die All-in-Runde im Hintergrund. Raises RuntimeError wenn belegt."""
+              spacing_min: float, spacing_max: float,
+              bet_pct_min: float = 100.0, bet_pct_max: float = 100.0) -> str:
+    """Startet die Wett-Runde im Hintergrund. Raises RuntimeError wenn belegt.
+
+    Pro Account wird ein zufälliger Prozentsatz (bet_pct_min..max) des Guthabens
+    gesetzt und der zeitliche Abstand (spacing_min..max) zwischen Accounts
+    randomisiert — beides gegen ein auffällig gleichförmiges Bot-Muster.
+    """
     outcome = next((o for o in event["outcomes"] if o["id"] == outcome_id), None)
     if outcome is None:
         raise ValueError("outcome not found on event")
@@ -422,6 +473,7 @@ def start_run(channel: str, event: dict, outcome_id: str, candidates: list,
         } for c in candidates],
         "_candidates": candidates,
         "_spacing": (min(spacing_min, spacing_max), max(spacing_min, spacing_max)),
+        "_bet_pct": (min(bet_pct_min, bet_pct_max), max(bet_pct_min, bet_pct_max)),
     }
     global _run
     with _run_lock:
@@ -431,15 +483,17 @@ def start_run(channel: str, event: dict, outcome_id: str, candidates: list,
         _run = run
     threading.Thread(target=_worker, args=(run,), daemon=True,
                      name="prediction-run").start()
-    logger.info('prediction run %s: %d account(s) all-in on "%s" (%s, #%s)',
+    logger.info('prediction run %s: %d account(s) on "%s" (%s, #%s), '
+                'einsatz %.0f-%.0f%%, abstand %.0f-%.0fs',
                 run["run_id"], len(candidates), outcome["title"],
-                event["title"], channel)
+                event["title"], channel, *run["_bet_pct"], *run["_spacing"])
     return run["run_id"]
 
 
 def _worker(run: dict) -> None:
     locks_at = run["locks_at_epoch"]
     lo, hi = run["_spacing"]
+    pct_lo, pct_hi = run["_bet_pct"]
     last = len(run["_candidates"]) - 1
     for i, cand in enumerate(run["_candidates"]):
         res = run["results"][i]
@@ -456,9 +510,10 @@ def _worker(run: dict) -> None:
             continue
 
         _set(status="betting")
+        fp = fp_headers(cand.get("device_id"), cand.get("ua_app"))
         try:
             state = redeem.fetch_channel_points(cand["token"], cand["proxies"],
-                                                run["channel"])
+                                                run["channel"], extra_headers=fp)
             balance = int(state.get("balance") or 0)
         except redeem.RedeemError as e:
             _set(status="failed", message=f"Punktestand: {e}")
@@ -466,14 +521,22 @@ def _worker(run: dict) -> None:
                        f"Wette fehlgeschlagen (Punktestand): {e}")
             continue
 
-        amount = min(balance, MAX_BET)
+        # Zufälliger Prozentsatz des Guthabens (statt immer 100% All-in).
+        pct = random.uniform(pct_lo, pct_hi)
+        amount = min(int(balance * pct / 100.0), MAX_BET)
+        # Bei sehr kleinem Guthaben würde die %-Reduktion unter das Minimum
+        # fallen -> dann so viel setzen wie geht (bis Guthaben/MAX_BET).
+        if amount < MIN_BET:
+            amount = min(balance, MAX_BET)
         if amount < MIN_BET:
             _set(status="skipped", balance=balance,
                  message=f"unter Minimum ({MIN_BET} Punkte)")
             continue
 
         r = make_prediction(cand["token"], cand["proxies"], run["event_id"],
-                            run["outcome_id"], amount)
+                            run["outcome_id"], amount,
+                            device_id=cand.get("device_id"),
+                            user_agent=cand.get("ua_app"))
         if r["ok"]:
             _set(status="ok", balance=balance, points=amount,
                  message=f"{amount:,} Punkte gesetzt".replace(",", "."))
@@ -494,7 +557,21 @@ def _worker(run: dict) -> None:
                            r["message"])
 
         if i < last:
-            time.sleep(random.uniform(lo, hi))
+            gap = random.uniform(lo, hi)
+            # Breites Fenster ist gut fürs Muster, darf aber nicht dazu führen,
+            # dass späte Accounts nach dem Lock rausfallen: verbleibende Zeit auf
+            # die restlichen Accounts verteilen (je ~2s Puffer pro Einsatz-Request).
+            if locks_at is not None:
+                remaining = last - i  # Accounts nach diesem
+                budget = locks_at - time.time() - LOCK_SAFETY_SECONDS - remaining * 2.0
+                gap = 0.0 if budget <= 0 else min(gap, budget / remaining)
+            if gap > 0:
+                # in kleinen Schritten schlafen, damit Abbrechen schnell greift
+                slept = 0.0
+                while slept < gap and not _cancel.is_set():
+                    step = min(0.5, gap - slept)
+                    time.sleep(step)
+                    slept += step
 
     with _run_lock:
         run["cancelled"] = _cancel.is_set()

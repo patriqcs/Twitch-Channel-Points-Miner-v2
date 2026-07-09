@@ -23,6 +23,8 @@ class PredictionConfig(BaseModel):
     exclude: str | None = None
     spacing_min: float | None = None
     spacing_max: float | None = None
+    bet_pct_min: float | None = None
+    bet_pct_max: float | None = None
 
 
 @router.get("/config")
@@ -43,6 +45,12 @@ def put_config(body: PredictionConfig, session: Session = Depends(get_session)):
     if body.spacing_max is not None:
         prediction.set_setting(session, prediction.SPACING_MAX_KEY,
                                str(max(0.0, float(body.spacing_max))))
+    if body.bet_pct_min is not None:
+        prediction.set_setting(session, prediction.BET_PCT_MIN_KEY,
+                               str(max(1.0, min(100.0, float(body.bet_pct_min)))))
+    if body.bet_pct_max is not None:
+        prediction.set_setting(session, prediction.BET_PCT_MAX_KEY,
+                               str(max(1.0, min(100.0, float(body.bet_pct_max)))))
     session.commit()
     return prediction.get_config(session)
 
@@ -72,8 +80,9 @@ def get_active(channel: str | None = None,
     candidates = prediction.eligible_accounts(session)
     scout = _scout(candidates)
     try:
-        data = prediction.fetch_active_prediction(scout["token"],
-                                                  scout["proxies"], ch)
+        data = prediction.fetch_active_prediction(
+            scout["token"], scout["proxies"], ch,
+            device_id=scout.get("device_id"), user_agent=scout.get("ua_app"))
     except redeem.RedeemError as e:
         raise HTTPException(400, str(e))
     return {
@@ -128,8 +137,10 @@ def start_bet(body: BetRequest, session: Session = Depends(get_session)):
     # Direkt vor dem Feuern verifizieren: Wette existiert noch, ist offen und
     # das gewählte Ergebnis gehört dazu (das UI kann veraltet sein).
     try:
-        data = prediction.fetch_active_prediction(candidates[0]["token"],
-                                                  candidates[0]["proxies"], ch)
+        data = prediction.fetch_active_prediction(
+            candidates[0]["token"], candidates[0]["proxies"], ch,
+            device_id=candidates[0].get("device_id"),
+            user_agent=candidates[0].get("ua_app"))
     except redeem.RedeemError as e:
         raise HTTPException(400, str(e))
     event = data["event"]
@@ -144,7 +155,8 @@ def start_bet(body: BetRequest, session: Session = Depends(get_session)):
 
     try:
         run_id = prediction.start_run(ch, event, body.outcome_id, candidates,
-                                      cfg["spacing_min"], cfg["spacing_max"])
+                                      cfg["spacing_min"], cfg["spacing_max"],
+                                      cfg["bet_pct_min"], cfg["bet_pct_max"])
     except RuntimeError:
         raise HTTPException(409, "es läuft bereits eine Wett-Runde")
     outcome = next(o for o in event["outcomes"] if o["id"] == body.outcome_id)
