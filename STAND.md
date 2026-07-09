@@ -50,6 +50,13 @@ aus).
   6667 auf **TLS 6697** umgestellt (direkt + socks-Proxy live getestet), und der
   stream_gate-Live-Check nutzt die volle TV-Signatur. Details:
   Memory `project-backend-gql-fingerprint-audit`.
+- **Tarn-Streamer (Anti-Bot):** Jeder Account beobachtet zusätzlich zu den
+  Farm-Streamern eine stabile, pro Account unterschiedliche Auswahl großer
+  deutscher Kanäle (Default 3 aus einem Pool von 22; `backend/cover.py`). Der
+  Miner folgt/abonniert sie automatisch → diverse Follows/Abos/Watch-Minuten
+  statt „schaut nur j4nkttv"-Muster. Farm-Streamer bleiben priorisiert; das
+  Stream-Gate triggert weiterhin nur auf die Farm-Streamer. Konfigurierbar unter
+  Einstellungen → „Tarn-Kanäle". Details: Memory `project-cover-streamers`.
 
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 
