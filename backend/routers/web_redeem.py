@@ -229,7 +229,9 @@ def rewards(channel: str, session: Session = Depends(get_session)):
     for r in cands:
         proxies = r["proxy"].requests_proxies if r["proxy"] else None
         try:
-            return redeem.fetch_channel_points(r["token"], proxies, ch)
+            return redeem.fetch_channel_points(
+                r["token"], proxies, ch,
+                extra_headers=redeem.fp_for_username(r["username"]))
         except redeem.RedeemError:
             continue
     raise HTTPException(400, "kein eingeloggter Account zum Laden der Belohnungen")

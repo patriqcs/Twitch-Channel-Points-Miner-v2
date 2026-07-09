@@ -32,11 +32,11 @@ from datetime import datetime, timezone
 import requests
 from sqlmodel import Session, select
 
-from backend import config
+from backend import config, redeem
 from backend.db import engine
 from backend.models import Account, AppSetting, Event, Proxy
 from backend.proxy_util import to_engine_proxy
-from TwitchChannelPointsMiner.constants import CLIENT_ID, GQLOperations, USER_AGENTS
+from TwitchChannelPointsMiner.constants import GQLOperations
 
 logger = logging.getLogger("stream_gate")
 
@@ -200,10 +200,10 @@ class StreamGateMonitor:
             resp = requests.post(
                 GQLOperations.url,
                 json=json_data,
-                headers={
-                    "Client-ID": CLIENT_ID,
-                    "User-Agent": USER_AGENTS["Android"]["TV"],
-                },
+                # Volle TV-Client-Signatur (Client-Id + TV-UA + Client-Version +
+                # Client-Session-Id) statt nur Client-Id + generischer TV-UA — der
+                # anonyme Live-Check sieht damit wie ein echter TV-Client aus.
+                headers=redeem.fp_headers(),
                 timeout=config.STREAM_GATE_HTTP_TIMEOUT,
             )
             resp.raise_for_status()

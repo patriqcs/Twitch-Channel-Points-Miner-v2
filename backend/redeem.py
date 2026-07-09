@@ -14,9 +14,10 @@ import time
 import uuid
 
 import requests
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from backend import config
+from backend.db import engine
 from backend.models import Account, AppSetting, Proxy
 from backend.proxy_util import to_engine_proxy
 
@@ -277,7 +278,8 @@ def schedule_master_redeem(channel_id, reward, candidates, per_account_cd,
                         break
                 if cancelled:
                     break
-                r = redeem_reward(token, proxies, channel_id, reward, prompt)
+                r = redeem_reward(token, proxies, channel_id, reward, prompt,
+                                  extra_headers=fp_for_username(uname))
                 if r["ok"]:
                     set_account_cooldown(aid, rid, per_account_cd)
                     set_global_cooldown(rid, global_delay)
@@ -311,6 +313,64 @@ def schedule_master_redeem(channel_id, reward, candidates, per_account_cd,
 # NOT allowed to run these private operations.
 TWITCH_WEB_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
 GQL_ENDPOINT = "https://gql.twitch.tv/gql"
+
+# --- Fingerabdruck: TV-Miner-Signatur ----------------------------------------
+# Alle Account-Tokens werden vom Miner als Android-TV-Client ausgestellt
+# (TV-Client-Id + ua_app als User-Agent + X-Device-Id). Die Backend-Requests
+# müssen dieselbe Signatur tragen, sonst präsentieren sie einen TV-Token hinter
+# der Web-Client-Id mit python-requests-UA und ohne Geräte-Id — eine auffällige
+# Abweichung vom sonstigen Traffic des Accounts. Live verifiziert, dass die
+# TV-Signatur für ChannelPointsContext, RedeemCustomReward, HeistStreamCheck,
+# ActivePredictionEvents und MakePrediction akzeptiert wird.
+TWITCH_TV_CLIENT_ID = "ue6666qo983tsx6so1t0vnawi233wa"
+TWITCH_CLIENT_VERSION = "ef928475-9403-42f2-8a34-55784bd08e16"
+# Wie der Miner: eine zufällige Session-Id pro Prozess (nicht pro Request).
+_CLIENT_SESSION_ID = uuid.uuid4().hex
+# Fallback-UA (ein plausibler TV-App-String), falls ein Account-Row (noch) kein
+# ua_app hat — verhindert, dass sonst der python-requests-Default durchschlägt.
+_FALLBACK_TV_UA = ("Dalvik/2.1.0 (Linux; U; Android 9; SHIELD Android TV "
+                   "Build/PPR1.180610.011) tv.twitch.android.app/16.9.1/1609010")
+
+_fp_cache: dict = {}             # username -> extra_headers (device_id/ua immutable)
+_fp_lock = threading.Lock()
+
+
+def fp_headers(device_id: "str | None" = None,
+               user_agent: "str | None" = None) -> dict:
+    """TV-Signatur-Header (Client-Id/UA/X-Device-Id/Version/Session)."""
+    h = {"Client-Id": TWITCH_TV_CLIENT_ID,
+         "Client-Version": TWITCH_CLIENT_VERSION,
+         "Client-Session-Id": _CLIENT_SESSION_ID,
+         "User-Agent": user_agent or _FALLBACK_TV_UA}
+    if device_id:
+        h["X-Device-Id"] = device_id
+    return h
+
+
+def account_fp(account: "Account | None") -> dict:
+    """extra_headers für eine Account-Row (nutzt ihre persistierte TV-Signatur)."""
+    if account is None:
+        return fp_headers()
+    return fp_headers(getattr(account, "device_id", None),
+                      getattr(account, "ua_app", None))
+
+
+def fp_for_username(username: str) -> dict:
+    """extra_headers für einen Account per Username (gecacht; UA/device_id sind
+    pro Account unveränderlich, daher braucht der Cache keine Invalidierung)."""
+    with _fp_lock:
+        cached = _fp_cache.get(username)
+    if cached is not None:
+        return cached
+    try:
+        with Session(engine) as s:
+            acc = s.exec(select(Account).where(Account.username == username)).first()
+        h = account_fp(acc)
+    except Exception:  # noqa: BLE001 — Fingerprint darf nie den Request verhindern
+        h = fp_headers()
+    with _fp_lock:
+        _fp_cache[username] = h
+    return h
 
 _CHANNEL_POINTS_QUERY = """
 query ChannelPointsContext($channelLogin: String!) {
@@ -485,7 +545,7 @@ def fetch_channel_points(token, proxies, channel_login: str,
 
 
 def redeem_reward(token, proxies, channel_id: str, reward: dict,
-                  prompt: "str | None" = None) -> dict:
+                  prompt: "str | None" = None, extra_headers=None) -> dict:
     """Redeem one custom reward. Returns {ok, redemptionId|reason, message?}."""
     input_ = {
         "channelID": channel_id,
@@ -499,7 +559,7 @@ def redeem_reward(token, proxies, channel_id: str, reward: dict,
     }
     try:
         data = _gql(token, proxies, "RedeemCustomReward", _REDEEM_MUTATION,
-                    {"input": input_})
+                    {"input": input_}, extra_headers=extra_headers)
     except RedeemError as e:
         return {"ok": False, "reason": "network", "message": str(e)}
 

@@ -92,7 +92,9 @@ def channel_points(account_id: int, channel: str,
     acc = _get_account(session, account_id)
     try:
         token, proxies = redeem_mod.account_creds(session, acc)
-        return redeem_mod.fetch_channel_points(token, proxies, channel.strip().lower())
+        return redeem_mod.fetch_channel_points(
+            token, proxies, channel.strip().lower(),
+            extra_headers=redeem_mod.account_fp(acc))
     except redeem_mod.RedeemError as e:
         raise HTTPException(400, str(e))
 
@@ -150,7 +152,9 @@ def redeem_all(body: AllRedeemRequest, session: Session = Depends(get_session)):
             continue
         if reward is None:
             try:
-                state = redeem_mod.fetch_channel_points(token, proxies, channel)
+                state = redeem_mod.fetch_channel_points(
+                    token, proxies, channel,
+                    extra_headers=redeem_mod.account_fp(acc))
             except redeem_mod.RedeemError:
                 continue
             reward = next((r for r in state["rewards"] if r["id"] == body.reward_id), None)
@@ -188,9 +192,11 @@ def redeem(account_id: int, body: RedeemRequest,
     acc = _get_account(session, account_id)
     count = max(1, min(body.count, 50))
     cd_secs = redeem_mod.cooldown_seconds(session, body.reward_id)
+    fp = redeem_mod.account_fp(acc)
     try:
         token, proxies = redeem_mod.account_creds(session, acc)
-        state = redeem_mod.fetch_channel_points(token, proxies, body.channel.strip().lower())
+        state = redeem_mod.fetch_channel_points(
+            token, proxies, body.channel.strip().lower(), extra_headers=fp)
     except redeem_mod.RedeemError as e:
         raise HTTPException(400, str(e))
 
@@ -207,7 +213,8 @@ def redeem(account_id: int, body: RedeemRequest,
             results.append({"ok": False, "reason": "cooldown",
                             "message": f"Cooldown aktiv ({remaining:.0f}s)"})
             break
-        r = redeem_mod.redeem_reward(token, proxies, state["channelId"], reward, body.prompt)
+        r = redeem_mod.redeem_reward(token, proxies, state["channelId"], reward,
+                                     body.prompt, extra_headers=fp)
         results.append(r)
         if r["ok"]:
             redeem_mod.set_account_cooldown(acc.id, reward["id"], cd_secs)

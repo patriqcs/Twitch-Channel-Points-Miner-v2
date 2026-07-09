@@ -173,7 +173,9 @@ class HeistManager(threading.Thread):
         if cred is None:
             return None
         proxies = cred["proxy"].requests_proxies if cred["proxy"] else None
-        result = heist.stream_online(cfg["channel"], cred["token"], proxies)
+        result = heist.stream_online(cfg["channel"], cred["token"], proxies,
+                                     extra_headers=heist.redeem.fp_for_username(
+                                         cred["username"]))
         self._last_online_check = now
         if result is not None:
             if result != self._online:

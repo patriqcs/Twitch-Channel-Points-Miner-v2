@@ -32,7 +32,10 @@ from backend.proxy_util import to_engine_proxy
 logger = logging.getLogger("backend.heist")
 
 IRC_SERVER = "irc.chat.twitch.tv"
-IRC_PORT = 6667
+# TLS-Port (6697) statt Klartext-IRC (6667): eine echte Twitch-Chatsitzung ist
+# verschlüsselt; ein unverschlüsselter oauth:<TV-Token> über Port 6667 fällt aus
+# dem normalen Traffic-Bild. Twitch unterstützt IRC-over-TLS offiziell.
+IRC_PORT = 6697
 
 # Client-side IRC keepalive/staleness (seconds). A mostly-idle proxied IRC socket
 # gets silently reaped by the Mullvad SOCKS relay within seconds; a half-open
@@ -264,11 +267,12 @@ query HeistStreamCheck($login: String!) {
 }"""
 
 
-def stream_online(channel: str, token: str, proxies) -> "bool | None":
+def stream_online(channel: str, token: str, proxies,
+                  extra_headers=None) -> "bool | None":
     """True/False if the channel is live, or None if the check itself failed."""
     try:
         data = redeem._gql(token, proxies, "HeistStreamCheck", _STREAM_QUERY,
-                           {"login": channel})
+                           {"login": channel}, extra_headers=extra_headers)
     except redeem.RedeemError as e:
         logger.debug("stream_online check failed for %s: %s", channel, e)
         return None
@@ -279,8 +283,20 @@ def stream_online(channel: str, token: str, proxies) -> "bool | None":
 
 
 # ---- IRC: proxy-routed connect factory ----
+def _wrap_tls(sock, host):
+    """TLS-Handshake auf einem bereits verbundenen Socket (Port 6697).
+
+    server_hostname = der IRC-Host (SNI + Zertifikatsprüfung), NICHT der Proxy.
+    """
+    import ssl
+    ctx = ssl.create_default_context()
+    tls = ctx.wrap_socket(sock, server_hostname=host)
+    tls.settimeout(None)
+    return tls
+
+
 def _socks_connect_factory(engine_proxy):
-    """Build an irc connect_factory that routes the TCP socket through a proxy.
+    """Build an irc connect_factory that routes the (TLS) socket through a proxy.
 
     Without a proxy we still wrap the direct connect with a timeout, so an
     unreachable route (e.g. a tunnel killswitch) fails fast instead of hanging
@@ -292,8 +308,7 @@ def _socks_connect_factory(engine_proxy):
         def direct_factory(server_address):
             host, port = server_address
             sock = socket.create_connection((host, int(port)), timeout=20)
-            sock.settimeout(None)
-            return sock
+            return _wrap_tls(sock, host)
 
         return direct_factory
 
@@ -318,8 +333,8 @@ def _socks_connect_factory(engine_proxy):
         )
         sock.settimeout(20)
         sock.connect((host, int(port)))
-        sock.settimeout(None)
-        return sock
+        # TLS erst NACH dem Proxy-CONNECT: verschlüsselter Tunnel zum IRC-Host.
+        return _wrap_tls(sock, host)
 
     return factory
 

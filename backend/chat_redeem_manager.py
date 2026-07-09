@@ -133,7 +133,7 @@ class ChatRedeemManager(threading.Thread):
             if self._connect_error:
                 self._set_reason(f"Chat-Verbindung fehlgeschlagen ({self._connect_error}) "
                                  "— Proxy des Ansage-Accounts erlaubt evtl. kein IRC "
-                                 "(Port 6667); anderen Proxy/Account ohne Proxy nutzen")
+                                 "(Port 6697/TLS); anderen Proxy/Account ohne Proxy nutzen")
             else:
                 self._set_reason("verbinde mit dem Chat…")
             return
@@ -406,7 +406,8 @@ class ChatRedeemManager(threading.Thread):
         """Redeem `reward` with `acc` and apply cooldowns/balance bookkeeping."""
         reward_id = reward["id"]
         proxies = acc["proxy"].requests_proxies if acc["proxy"] else None
-        res = redeem.redeem_reward(acc["token"], proxies, channel_id, reward)
+        res = redeem.redeem_reward(acc["token"], proxies, channel_id, reward,
+                                   extra_headers=redeem.fp_for_username(acc["username"]))
         if res["ok"]:
             # configured per-account cooldown (min the small rotate fallback so a
             # burst never re-picks the same account at once) + global spacing
@@ -472,7 +473,9 @@ class ChatRedeemManager(threading.Thread):
                     continue
                 proxies = r["proxy"].requests_proxies if r["proxy"] else None
                 try:
-                    state = redeem.fetch_channel_points(r["token"], proxies, cfg["channel"])
+                    state = redeem.fetch_channel_points(
+                        r["token"], proxies, cfg["channel"],
+                        extra_headers=redeem.fp_for_username(r["username"]))
                 except redeem.RedeemError as e:
                     logger.debug("chat-redeem balance fetch failed for %s: %s",
                                  r["username"], e)

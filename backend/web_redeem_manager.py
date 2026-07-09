@@ -260,7 +260,8 @@ class WebRedeemManager(threading.Thread):
         free.sort(key=lambda x: x[0], reverse=True)
         bal, acc = free[0]
         proxies = acc["proxy"].requests_proxies if acc["proxy"] else None
-        res = redeem.redeem_reward(acc["token"], proxies, channel_id, reward)
+        res = redeem.redeem_reward(acc["token"], proxies, channel_id, reward,
+                                   extra_headers=redeem.fp_for_username(acc["username"]))
         who = visitor or "Webseite"
         if res["ok"]:
             redeem.set_account_cooldown(acc["id"], reward_id,
@@ -378,7 +379,9 @@ class WebRedeemManager(threading.Thread):
                     continue
                 proxies = r["proxy"].requests_proxies if r["proxy"] else None
                 try:
-                    state = redeem.fetch_channel_points(r["token"], proxies, cfg["channel"])
+                    state = redeem.fetch_channel_points(
+                        r["token"], proxies, cfg["channel"],
+                        extra_headers=redeem.fp_for_username(r["username"]))
                 except redeem.RedeemError as e:
                     logger.debug("web-redeem balance fetch failed for %s: %s",
                                  r["username"], e)
