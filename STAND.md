@@ -62,6 +62,11 @@ aus).
   online und schaut die Tarn-Kanäle, danach gehen auch die letzten aus (kein
   24/7). Im `stream_gate` (`_offline_presence_loop`), konfigurierbar
   (Offline-Präsenz + Offline-Fenster); 0 = altes Verhalten (alle stoppen).
+- **Ausschluss von der Tarn-Mechanik:** Accounts in `COVER_EXCLUDE` (Default
+  `patriqcs`, kommasepariert) bekommen KEINE Tarn-Kanäle und werden nie als
+  Offline-Präsenz genutzt — der echte Hauptaccount bleibt sauber/real. UI-Feld
+  „Ausgeschlossene Accounts" in der Tarn-Kanäle-Karte. Verifiziert:
+  patriqcs → nur `['j4nkttv']`.
 
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 
