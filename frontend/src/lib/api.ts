@@ -187,10 +187,11 @@ export interface PredictionRun {
   results: {
     account_id: number;
     username: string;
-    status: "waiting" | "betting" | "ok" | "skipped" | "failed";
+    status: "waiting" | "betting" | "ok" | "skipped" | "failed" | "tos_blocked";
     balance: number | null;
     points: number | null;
     message: string;
+    code: string | null;
   }[];
 }
 

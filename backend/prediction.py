@@ -150,13 +150,38 @@ mutation MakePrediction($input: MakePredictionInput!) {
   }
 }"""
 
+# Vollständige Fehler-Codes aus dem Twitch-Web-Bundle (PredictionError-Enum).
 _ERROR_MESSAGES = {
+    # AGB der Kanalwetten nicht akzeptiert. Twitch bietet dafür KEINE API — die
+    # Zustimmung geht nur einmalig über die offizielle Website/App (erster Tipp
+    # auf eine Wette + Häkchen bei den „Predictions Terms"). Danach wettet der
+    # Account dauerhaft per API. Nachgewiesen: MakePredictionInput hat kein
+    # Zustimmungs-Feld, es gibt keine Accept-Mutation, ProductConsentType kennt
+    # keinen Predictions-Typ.
+    "MUST_ACCEPT_TOS": "AGB nicht akzeptiert — einmalig auf twitch.tv annehmen "
+                       "(siehe Hinweis).",
     "NOT_ENOUGH_POINTS": "Nicht genug Punkte.",
     "EVENT_NOT_ACTIVE": "Wette ist nicht mehr offen.",
     "EVENT_LOCKED": "Wette ist bereits gesperrt.",
-    "MAX_POINTS_EXCEEDED": "Über dem Twitch-Maximum pro Wette.",
+    "MAX_POINTS_PER_EVENT": "Über dem Twitch-Maximum pro Wette (250k).",
+    "MAX_POINTS_EXCEEDED": "Über dem Twitch-Maximum pro Wette (250k).",
     "DUPLICATE_TRANSACTION": "Doppelte Transaktion.",
+    "TRANSACTION_IN_PROGRESS": "Transaktion läuft bereits.",
+    "RATE_LIMITED": "Von Twitch rate-limitiert — kurz warten.",
+    "FORBIDDEN": "Nicht erlaubt (gesperrt/eingeschränkt).",
+    "NOT_FOUND": "Wette/Ergebnis nicht gefunden.",
+    "MULTIPLE_OUTCOMES": "Bereits auf ein anderes Ergebnis gesetzt.",
+    "REGION_LOCKED": "In dieser Region gesperrt.",
+    "CATEGORY_REGION_LOCKED": "Kategorie in dieser Region gesperrt.",
+    "SPECTATOR_MODE_INELIGIBLE": "Account nicht wettberechtigt (Zuschauer-Modus).",
+    "SPECTATOR_MODE_DUPLICATE": "Doppelte Wette (Zuschauer-Modus).",
+    "EVENT_MANAGER": "Event-Manager-Fehler.",
+    "UNKNOWN": "Unbekannter Twitch-Fehler.",
 }
+
+# Codes, bei denen der Account eine einmalige manuelle Freischaltung braucht
+# (nicht durch Wiederholen lösbar) — fürs UI separat markiert.
+TOS_BLOCKED_CODE = "MUST_ACCEPT_TOS"
 
 
 def _post_gql(token, proxies, body, timeout=15):
@@ -354,7 +379,8 @@ def start_run(channel: str, event: dict, outcome_id: str, candidates: list,
         "cancelled": False,
         "results": [{
             "account_id": c["id"], "username": c["username"],
-            "status": "waiting", "balance": None, "points": None, "message": "",
+            "status": "waiting", "balance": None, "points": None,
+            "message": "", "code": None,
         } for c in candidates],
         "_candidates": candidates,
         "_spacing": (min(spacing_min, spacing_max), max(spacing_min, spacing_max)),
@@ -419,7 +445,11 @@ def _worker(run: dict) -> None:
             logger.info("prediction: %s bet %d on \"%s\"", cand["username"],
                         amount, run["outcome_title"])
         else:
-            _set(status="failed", balance=balance, message=r["message"])
+            code = r.get("code")
+            # AGB-Sperre ist kein „Fehlschlag" durch Wiederholen lösbar, sondern
+            # eine einmalige manuelle Freischaltung -> eigener Status fürs UI.
+            status = "tos_blocked" if code == TOS_BLOCKED_CODE else "failed"
+            _set(status=status, balance=balance, message=r["message"], code=code)
             _log_event(cand["id"], run["channel"], None,
                        f'Wette fehlgeschlagen: {r["message"]}')
             logger.warning("prediction: %s failed: %s", cand["username"],

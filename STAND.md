@@ -24,6 +24,15 @@ aus).
   Event-Typ `prediction` in den Account-Logs.
 - Es läuft max. EINE Wett-Runde gleichzeitig; vor dem Start wird live
   verifiziert, dass die Wette noch offen ist und das Ergebnis dazugehört.
+- **Wett-AGB (`MUST_ACCEPT_TOS`):** Frische Accounts müssen die „Predictions
+  Terms" **einmalig** akzeptieren, bevor sie wetten dürfen. Twitch bietet dafür
+  **keine API** (nachgewiesen per Schema-Sondierung: `MakePredictionInput` hat
+  nur `eventID/outcomeID/points/transactionID`; keine Accept-Mutation existiert;
+  `ProductConsentType` kennt nur `TERMS_OF_SERVICE/TERMS_OF_SALE/PRIVACY_NOTICE`,
+  nichts Prediction-spezifisches). Ablauf: als betroffener Account auf twitch.tv
+  einloggen, bei offener Wette einen Betrag setzen und das AGB-Häkchen
+  bestätigen — danach wettet der Account dauerhaft per API. Das UI markiert
+  betroffene Accounts als „🔒 AGB nötig" und zeigt diese Anleitung an.
 
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 

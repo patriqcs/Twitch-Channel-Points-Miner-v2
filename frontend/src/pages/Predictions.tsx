@@ -17,6 +17,7 @@ const RUN_STATUS: Record<string, string> = {
   ok: "✅ gesetzt",
   skipped: "⏭️ übersprungen",
   failed: "❌ fehlgeschlagen",
+  tos_blocked: "🔒 AGB nötig",
 };
 
 export default function Predictions() {
@@ -155,6 +156,7 @@ export default function Predictions() {
 
   const okCount = run?.results.filter((r) => r.status === "ok").length ?? 0;
   const runTotal = run?.results.reduce((s, r) => s + (r.points ?? 0), 0) ?? 0;
+  const tosBlocked = run?.results.filter((r) => r.status === "tos_blocked") ?? [];
 
   return (
     <div className="space-y-5">
@@ -343,6 +345,24 @@ export default function Predictions() {
               </div>
             ))}
           </div>
+
+          {tosBlocked.length > 0 && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <div className="font-medium text-amber-300">
+                🔒 {tosBlocked.length} Account(s) müssen die Wett-AGB einmalig annehmen
+              </div>
+              <div className="mt-1 text-zinc-300">
+                Twitch bietet dafür <b>keine API</b> — die Zustimmung geht nur einmal
+                pro Account über die Website. Sobald wieder eine Wette offen ist:
+                als betroffener Account auf twitch.tv einloggen, im Wett-Fenster
+                irgendeinen Betrag setzen und das Häkchen „Predictions Terms" bestätigen.
+                Danach wettet der Account dauerhaft automatisch mit.
+              </div>
+              <div className="mt-2 text-xs text-amber-200/80">
+                Betroffen: {tosBlocked.map((r) => r.username).join(", ")}
+              </div>
+            </div>
+          )}
         </Card>
       )}
 
