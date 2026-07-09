@@ -182,7 +182,17 @@ class WebSocketsPool:
 
     @staticmethod
     def on_close(ws, close_status_code, close_reason):
-        logger.info(f"#{ws.index} - WebSocket closed")
+        # Log the close reason: Twitch closes the PubSub socket with reason
+        # "security" when it bans/flags the account (the ban-wave signature).
+        # Surfacing it at WARNING lets the backend's ban-signal watcher auto-pull
+        # the account instead of hammering endless reconnects.
+        if close_reason:
+            logger.warning(
+                f"#{ws.index} - WebSocket closed (code={close_status_code}, "
+                f"reason={close_reason})"
+            )
+        else:
+            logger.info(f"#{ws.index} - WebSocket closed")
         # On close please reconnect automatically
         WebSocketsPool.handle_reconnection(ws)
 

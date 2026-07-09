@@ -199,6 +199,46 @@ class ProxyErrorReporter(logging.Handler):
             report(self.username, "proxy_error", message=msg[:200])
 
 
+# --------------------------------------------------------- ban signal watcher
+class BanSignalReporter(logging.Handler):
+    """Watches the miner's logs for account-level ban signals and reports a
+    'ban_signal' event so the backend can auto-pull the account instead of
+    hammering endless BADAUTH reconnects (which only confirm the detection).
+
+    Two signals:
+      * PubSub close reason "security" -> Twitch flagged/banned the account
+        (the ban-wave signature). Strong -> backend disables the account.
+      * ERR_BADAUTH -> the auth token is invalid (banned OR just an expired
+        cookie). Backend stops the process + marks needs_login (recoverable).
+    Reports once, then rate-limited, so a reconnect storm is not amplified.
+    """
+
+    def __init__(self, username: str, cooldown: float = 300.0):
+        super().__init__(level=logging.WARNING)
+        self.username = username
+        self.cooldown = cooldown
+        self._last = {}  # reason -> monotonic time of last report
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+        except Exception:  # noqa: BLE001
+            return
+        low = msg.lower()
+        reason = None
+        if "reason=security" in low or "\\x10hsecurity" in low or "'security'" in low:
+            reason = "security"
+        elif "err_badauth" in low:
+            reason = "badauth"
+        if reason is None:
+            return
+        now = time.monotonic()
+        if now - self._last.get(reason, 0.0) < self.cooldown:
+            return
+        self._last[reason] = now
+        report(self.username, "ban_signal", reason=reason, message=msg[:200])
+
+
 # ---------------------------------------------------------------- reporter
 class Reporter(threading.Thread):
     """Posts 'running'/'login' once streamers load, then periodic point totals.
@@ -379,6 +419,11 @@ def main():
     # and report them so the backend health monitor can fail over to another proxy.
     if proxy and INTERNAL_TOKEN:
         logging.getLogger().addHandler(ProxyErrorReporter(username))
+
+    # Watch for account-level ban signals (PubSub "security" close / ERR_BADAUTH)
+    # so the backend can auto-pull the account instead of reconnect-storming.
+    if INTERNAL_TOKEN:
+        logging.getLogger().addHandler(BanSignalReporter(username))
 
     # Do NOT overwrite a "needs_login" status with "starting": the heartbeat
     # watchdog treats "starting" as a stalled startup and restarts the account

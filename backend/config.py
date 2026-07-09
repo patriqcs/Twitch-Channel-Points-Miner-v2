@@ -97,6 +97,10 @@ AUTOSTART_MAX_WAIT = int(os.environ.get("AUTOSTART_MAX_WAIT", "180"))  # seconds
 #     (fail-open): a broken live-check must never silently halt all mining.
 # Start/stop are spread out with a random per-account gap (STEP_MIN..STEP_MAX)
 # so accounts trickle in/out over minutes instead of all switching at once.
+# Auto-Pull: bei einem Ban-Signal ('security'-Close / ERR_BADAUTH) den Account
+# sofort automatisch stoppen (bei Sperre: deaktivieren), statt endlos zu
+# reconnecten — die Reconnect-Flut bestätigt die Erkennung nur.
+AUTO_PULL_ENABLED = _bool_env("AUTO_PULL_ENABLED", True)
 STREAM_GATE_ENABLED = _bool_env("STREAM_GATE_ENABLED", True)
 STREAM_GATE_CHECK_INTERVAL = int(os.environ.get("STREAM_GATE_CHECK_INTERVAL", "60"))    # s
 STREAM_GATE_OFFLINE_CONFIRM = int(os.environ.get("STREAM_GATE_OFFLINE_CONFIRM", "3"))

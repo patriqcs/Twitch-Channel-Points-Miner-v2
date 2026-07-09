@@ -118,6 +118,44 @@ def post_event(payload: EventIn, session: Session = Depends(get_session)):
         acc.last_login_at = datetime.now(timezone.utc)
         acc.status = "running"
         session.add(acc)
-
     session.commit()
+    # Auto-Pull NACH dem Commit: erst den Miner-Prozess stoppen (bricht die
+    # endlose Reconnect-Schleife), DANN den dauerhaften Zustand setzen — so
+    # gewinnt unser Status gegen das „stopped", das manager.stop() schreibt.
+    if payload.type == "ban_signal" and config.AUTO_PULL_ENABLED:
+        _auto_pull(payload)
     return {"ok": True}
+
+
+def _auto_pull(payload: EventIn) -> None:
+    """Ban-Signal: Prozess stoppen + Account je nach Signal deaktivieren
+    ('security' = Sperre) bzw. needs_login setzen ('badauth' = Token ungültig).
+    Best-effort — darf den Event-Endpoint nie scheitern lassen."""
+    username = payload.username
+    reason = (payload.reason or "").lower()
+    # 1) Prozess stoppen (setzt Status 'stopped')
+    try:
+        from backend.manager import manager
+        manager.stop(username)
+    except Exception:  # noqa: BLE001
+        pass
+    # 2) dauerhaften Zustand als LETZTEN Schritt setzen (frische Session)
+    try:
+        from backend.db import engine
+        with Session(engine) as s:
+            acc = s.exec(select(Account).where(Account.username == username)).first()
+            if acc is None:
+                return
+            if "security" in reason:
+                acc.enabled = False
+                acc.status = "error"
+                msg = "Ban-Signal (PubSub 'security') -> Account automatisch deaktiviert"
+            else:  # badauth
+                acc.status = "needs_login"
+                msg = "ERR_BADAUTH -> gestoppt, Login erforderlich"
+            s.add(acc)
+            s.add(Event(account_id=acc.id, type="ban_signal", reason=reason,
+                        message=msg))
+            s.commit()
+    except Exception:  # noqa: BLE001
+        pass
