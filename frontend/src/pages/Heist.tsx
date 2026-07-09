@@ -3,9 +3,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type HeistConfig } from "@/lib/api";
 import { Button, Card, Input } from "@/components/ui";
 
-// Only this account gets a !play button.
-const PLAY_USERNAME = "wirklichNICHTpatriQ";
-
 const NUM_FIELDS: { key: keyof HeistConfig; label: string; hint: string }[] = [
   { key: "start_cooldown", label: "Start-Cooldown (s)", hint: "pro Account zwischen zwei !heist (Bot-Limit, i.d.R. 3600)" },
   { key: "spacing_min", label: "Spacing min (s)", hint: "min. Abstand zwischen zwei Openern" },
@@ -82,38 +79,14 @@ export default function Heist() {
     return Math.max(0, base - (now - dataUpdatedAt) / 1000);
   };
 
-  const playAccount = [...(status?.openers ?? []), ...(status?.joiners ?? [])].find(
-    (a) => a.username.toLowerCase() === PLAY_USERNAME.toLowerCase()
-  );
-
-  const playOne = async (id: number, username: string) => {
-    setMsg(`⏳ !play mit ${username}…`);
-    try {
-      const r = await api.heistTest(id, "!play");
-      setMsg(r.ok ? `✅ ${username}: !play gesendet` : `❌ ${username}: fehlgeschlagen`);
-    } catch (e) {
-      setMsg(`❌ ${(e as Error).message}`);
-    }
-  };
-
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold">Heist</h1>
-        <div className="flex items-center gap-3">
-          <Button
-            variant="outline"
-            disabled={!playAccount}
-            title={playAccount ? `!play mit ${PLAY_USERNAME}` : `${PLAY_USERNAME} nicht gefunden`}
-            onClick={() => playAccount && playOne(playAccount.id, playAccount.username)}
-          >
-            !play ({PLAY_USERNAME})
-          </Button>
-          <label className="flex items-center gap-2 text-sm">
-            <input type="checkbox" checked={cfg.enabled} onChange={(e) => toggleEnabled(e.target.checked)} />
-            Modul aktiviert
-          </label>
-        </div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={cfg.enabled} onChange={(e) => toggleEnabled(e.target.checked)} />
+          Modul aktiviert
+        </label>
       </div>
 
       {/* Live status */}
