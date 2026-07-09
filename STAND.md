@@ -24,15 +24,18 @@ aus).
   Event-Typ `prediction` in den Account-Logs.
 - Es läuft max. EINE Wett-Runde gleichzeitig; vor dem Start wird live
   verifiziert, dass die Wette noch offen ist und das Ergebnis dazugehört.
-- **Wett-AGB (`MUST_ACCEPT_TOS`):** Frische Accounts müssen die „Predictions
-  Terms" **einmalig** akzeptieren, bevor sie wetten dürfen. Twitch bietet dafür
-  **keine API** (nachgewiesen per Schema-Sondierung: `MakePredictionInput` hat
-  nur `eventID/outcomeID/points/transactionID`; keine Accept-Mutation existiert;
-  `ProductConsentType` kennt nur `TERMS_OF_SERVICE/TERMS_OF_SALE/PRIVACY_NOTICE`,
-  nichts Prediction-spezifisches). Ablauf: als betroffener Account auf twitch.tv
-  einloggen, bei offener Wette einen Betrag setzen und das AGB-Häkchen
-  bestätigen — danach wettet der Account dauerhaft per API. Das UI markiert
-  betroffene Accounts als „🔒 AGB nötig" und zeigt diese Anleitung an.
+- **Wett-AGB (`MUST_ACCEPT_TOS`) — automatisch gelöst:** Frische Accounts geben
+  beim ersten Einsatz `MUST_ACCEPT_TOS` (Wett-AGB nie akzeptiert). Die echte
+  Twitch-Web-Mutation dafür wurde per Playwright aus dem Prediction-Chunk
+  extrahiert und live verifiziert: `updateUserPredictionSettings(input:
+  {hasAcceptedTOS:true, isTemporaryChatBadgeEnabled:true})` (Operation
+  `AcceptPredictionTermsMutation`), account-global und dauerhaft. `make_prediction`
+  akzeptiert bei `MUST_ACCEPT_TOS` jetzt automatisch die AGB und wiederholt den
+  Einsatz einmal — **kein manueller Website-Login mehr nötig**. Live bestätigt
+  (Account fieserknut): nach Auto-Accept ging der 10-Punkte-Testeinsatz durch
+  (`error=None`). Der Rest-Fehlerfall (Token abgelaufen) wird im UI als „🔒 …"
+  markiert. Achtung: `MakePredictionInput` hat KEIN Zustimmungs-Feld — die
+  Zustimmung ist zwingend die separate Mutation.
 
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 
