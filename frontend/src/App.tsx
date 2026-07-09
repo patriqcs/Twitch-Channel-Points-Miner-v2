@@ -8,6 +8,7 @@ import Redeem from "./pages/Redeem";
 import ChatRedeem from "./pages/ChatRedeem";
 import WebRedeem from "./pages/WebRedeem";
 import Heist from "./pages/Heist";
+import Predictions from "./pages/Predictions";
 import Settings from "./pages/Settings";
 import Logs from "./pages/Logs";
 
@@ -23,6 +24,7 @@ export default function App() {
         <Route path="chat-redeem" element={<ChatRedeem />} />
         <Route path="web-redeem" element={<WebRedeem />} />
         <Route path="heist" element={<Heist />} />
+        <Route path="wetten" element={<Predictions />} />
         <Route path="logs" element={<Logs />} />
         <Route path="settings" element={<Settings />} />
       </Route>

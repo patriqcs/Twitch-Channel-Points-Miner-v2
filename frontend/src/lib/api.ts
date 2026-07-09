@@ -133,6 +133,67 @@ export interface HeistStatus {
   joiners: { id: number; username: string; logged_in: boolean }[];
 }
 
+export interface PredictionOutcome {
+  id: string;
+  title: string;
+  color: string; // "BLUE" | "PINK"
+  total_points: number;
+  total_users: number;
+}
+
+export interface PredictionEvent {
+  id: string;
+  title: string;
+  status: string; // ACTIVE | LOCKED | ...
+  created_at: string;
+  window_seconds: number;
+  locks_in: number | null; // Sekunden bis zur Sperre (Server-Snapshot)
+  locks_at_epoch: number | null;
+  outcomes: PredictionOutcome[];
+}
+
+export interface PredictionActive {
+  channel: string;
+  channel_id: string | null;
+  display_name: string;
+  event: PredictionEvent | null;
+  accounts: { id: number; username: string; logged_in: boolean }[];
+}
+
+export interface PredictionBalances {
+  channel: string;
+  accounts: { id: number; username: string; logged_in: boolean; balance: number | null; error: string | null }[];
+  total_balance: number;
+}
+
+export interface PredictionConfig {
+  channel: string;
+  exclude: string;
+  spacing_min: number;
+  spacing_max: number;
+}
+
+export interface PredictionRun {
+  run_id: string;
+  channel: string;
+  event_id: string;
+  event_title: string;
+  outcome_id: string;
+  outcome_title: string;
+  locks_at_epoch: number | null;
+  started_at: number;
+  done: boolean;
+  cancelled: boolean;
+  results: {
+    account_id: number;
+    username: string;
+    status: "waiting" | "betting" | "ok" | "skipped" | "failed";
+    balance: number | null;
+    points: number | null;
+    message: string;
+  }[];
+}
+
 export interface Proxy {
   id: number;
   name: string;
@@ -345,6 +406,30 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ seconds: seconds ?? null }),
     }),
+
+  // predictions (all-in channel-point bets with all accounts except the exclude list)
+  getPredictionConfig: () => req<PredictionConfig>("/api/predictions/config"),
+  putPredictionConfig: (body: Partial<PredictionConfig>) =>
+    req<PredictionConfig>("/api/predictions/config", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  getActivePrediction: (channel: string) =>
+    req<PredictionActive>(
+      `/api/predictions/active?channel=${encodeURIComponent(channel)}`
+    ),
+  getPredictionBalances: (channel: string) =>
+    req<PredictionBalances>(
+      `/api/predictions/balances?channel=${encodeURIComponent(channel)}`
+    ),
+  startPredictionBet: (body: { channel: string; event_id: string; outcome_id: string }) =>
+    req<{ run_id: string; accounts: number; outcome: string; event: string }>(
+      "/api/predictions/bet",
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+  getPredictionRun: () => req<PredictionRun | null>("/api/predictions/run"),
+  cancelPredictionRun: () =>
+    req<{ cancelled: boolean }>("/api/predictions/cancel", { method: "POST" }),
 
   // chat-redeem (viewers trigger reward redemptions by typing chat commands)
   getChatRedeemConfig: () => req<ChatRedeemConfig>("/api/chat-redeem/config"),

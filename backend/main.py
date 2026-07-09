@@ -25,8 +25,8 @@ from backend.heist_manager import heist_manager
 from backend.chat_redeem_manager import chat_redeem_manager
 from backend.web_redeem_manager import web_redeem_manager
 from backend.routers import (
-    accounts, chat_redeem, heist, internal, metrics, proxies, public_redeem,
-    redeem, settings, system, web_redeem, ws,
+    accounts, chat_redeem, heist, internal, metrics, predictions, proxies,
+    public_redeem, redeem, settings, system, web_redeem, ws,
 )
 
 FRONTEND_DIR = Path(
@@ -230,6 +230,7 @@ app.include_router(accounts.router)
 app.include_router(proxies.router)
 app.include_router(redeem.router)
 app.include_router(heist.router)
+app.include_router(predictions.router)
 app.include_router(chat_redeem.router)
 app.include_router(web_redeem.router)
 app.include_router(public_redeem.router)

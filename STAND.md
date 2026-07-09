@@ -1,5 +1,30 @@
 # STAND — Web-Redeem (Stand: 2026-07-04)
 
+## Neu (2026-07-09, „Wetten"-Tab: All-in auf Kanalwetten — implementiert + lokal getestet)
+
+Neuer Manager-Tab **Wetten** (`frontend/src/pages/Predictions.tsx`, Route
+`/wetten`): Der Operator wählt EIN Ergebnis der aktiven Kanalwette (Prediction)
+eines Kanals; dann setzen **alle aktivierten Accounts außer einer
+Ausschlussliste (Default: `patriqcs`)** ALLE ihre Kanalpunkte auf genau dieses
+Ergebnis — direkt aus dem Backend per OAuth-Token + Proxy je Account (Muster
+redeem/heist), die Miner-Prozesse bleiben unberührt (`make_predictions` bleibt
+aus).
+
+- **Backend:** `backend/prediction.py` (GQL: Volltext-Query
+  `activePredictionEvents` — live gegen Twitch verifiziert; Mutation
+  `MakePrediction` über den bewährten Persisted-Hash des Miners mit
+  Volltext-Fallback; All-in-Runde als Hintergrund-Thread mit
+  Zufalls-Reihenfolge + Jitter 1–4 s zwischen Accounts, Limits 10 / 250 000
+  Punkte, Stopp bei Sperre/Abbruch) + Router `backend/routers/predictions.py`
+  (`/api/predictions/{config,active,balances,bet,run,cancel}`).
+- **UI:** Wette laden (pollt alle 7 s), Outcome-Karten (Pool/Anteil/Quote),
+  Punktestände aller wettberechtigten Accounts auf Knopfdruck (parallel),
+  Bestätigungsdialog, Live-Fortschritt pro Account, Abbrechen-Button,
+  Einstellungen (Ausschlussliste, Jitter). Jede Wette landet als
+  Event-Typ `prediction` in den Account-Logs.
+- Es läuft max. EINE Wett-Runde gleichzeitig; vor dem Start wird live
+  verifiziert, dass die Wette noch offen ist und das Ergebnis dazugehört.
+
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 
 Neuer Manager-Tab **Account anlegen** (`frontend/src/pages/CreateAccount.tsx`,
