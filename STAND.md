@@ -67,6 +67,21 @@ aus).
   Offline-Präsenz genutzt — der echte Hauptaccount bleibt sauber/real. UI-Feld
   „Ausgeschlossene Accounts" in der Tarn-Kanäle-Karte. Verifiziert:
   patriqcs → nur `['j4nkttv']`.
+- **Frühwarn-Auto-Pull (Ban-Signale):** Bei einem Ban-Signal wird der Account
+  sofort gezogen, statt endlos zu reconnecten. Engine loggt den PubSub-Close-Grund
+  → `miner_runner.BanSignalReporter` meldet `security`-Close (Sperre) bzw.
+  `ERR_BADAUTH` als `ban_signal`-Event; Backend deaktiviert (security) bzw.
+  stoppt + needs_login (badauth). `config.AUTO_PULL_ENABLED` (Default an).
+- **Tag/Nacht-Rhythmus:** Jeder Account hat ein stabiles, pro Account versetztes
+  Schlaf-Fenster in der tiefen Nacht (~23–02 Uhr Europe/Berlin, Default 7 h;
+  `backend/diurnal.py`) — schläft → wird nicht hochgefahren, keine Offline-Präsenz,
+  wird beim Einschlafen gestoppt. Abend-Streams unberührt, patriqcs ausgenommen.
+  Konfigurierbar unter Einstellungen → „Tag/Nacht-Rhythmus".
+- Recherche-Ergebnis (Ban-Vermeidung): größter offener Hebel ist die **IP**
+  (Datacenter/Mullvad → Residential, eine feste IP pro Account) + entzerrte
+  Account-Erstellung + Telefon-Verify — operativ, nicht Code. Chat-Aktivität als
+  Anti-Bot-Maßnahme wurde bewusst NICHT umgesetzt (koordinierter Bot-Chat ist
+  selbst ein Viewbot-Signal/Chat-Ban-Risiko).
 
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 
