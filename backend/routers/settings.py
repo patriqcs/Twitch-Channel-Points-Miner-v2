@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from backend import cover
+from backend import cover, diurnal
 from backend.db import get_session
 from backend.models import AppSetting
 from backend.schemas import SettingWrite
@@ -93,6 +93,32 @@ def put_cover(payload: CoverWrite, session: Session = Depends(get_session)):
         cover.set_setting(session, cover.COVER_EXCLUDE_KEY, payload.exclude.strip())
     session.commit()
     return get_cover(session)
+
+
+class DiurnalWrite(BaseModel):
+    enabled: bool | None = None
+    sleep_hours: float | None = None
+
+
+@router.get("/diurnal")
+def get_diurnal(session: Session = Depends(get_session)):
+    """Tag/Nacht-Rhythmus (Schlaf-Fenster pro Account)."""
+    cfg = diurnal.get_config(session)
+    return {"enabled": cfg["enabled"], "sleep_hours": cfg["sleep_hours"],
+            "max_sleep_hours": diurnal.MAX_SLEEP_HOURS}
+
+
+@router.put("/diurnal")
+def put_diurnal(payload: DiurnalWrite, session: Session = Depends(get_session)):
+    if payload.enabled is not None:
+        diurnal.set_setting(session, diurnal.DIURNAL_ENABLED_KEY,
+                            "1" if payload.enabled else "0")
+    if payload.sleep_hours is not None:
+        h = max(diurnal.MIN_SLEEP_HOURS,
+                min(diurnal.MAX_SLEEP_HOURS, float(payload.sleep_hours)))
+        diurnal.set_setting(session, diurnal.DIURNAL_SLEEP_HOURS_KEY, str(h))
+    session.commit()
+    return get_diurnal(session)
 
 
 @router.get("/{key}")

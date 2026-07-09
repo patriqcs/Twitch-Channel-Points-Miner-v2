@@ -55,7 +55,70 @@ export default function Settings() {
       </Card>
 
       <CoverCard />
+      <DiurnalCard />
     </div>
+  );
+}
+
+function DiurnalCard() {
+  const { data } = useQuery({ queryKey: ["diurnal"], queryFn: api.getDiurnal });
+  const [enabled, setEnabled] = useState(true);
+  const [sleepHours, setSleepHours] = useState(7);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (data) {
+      setEnabled(data.enabled);
+      setSleepHours(data.sleep_hours);
+    }
+  }, [data]);
+
+  const save = async () => {
+    try {
+      const r = await api.putDiurnal({ enabled, sleep_hours: sleepHours });
+      setSleepHours(r.sleep_hours);
+      setMsg("✅ Gespeichert");
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`);
+    }
+  };
+
+  return (
+    <Card className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="font-semibold">Tag/Nacht-Rhythmus (Anti-Bot)</div>
+        <label className="flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          aktiviert
+        </label>
+      </div>
+      <div className="text-sm text-zinc-400">
+        Jeder Account bekommt ein <b>stabiles, pro Account leicht versetztes
+        Schlaf-Fenster</b> in der tiefen Nacht (Start ~23–02 Uhr, Europe/Berlin).
+        Während dieser Zeit wird er nicht hochgefahren und nicht als Offline-Präsenz
+        genutzt — echte Zuschauer sind nachts nicht online. Abend-Streams
+        (dt. Primetime) bleiben unberührt. Ausgeschlossene Accounts (z.B. patriqcs)
+        sind ausgenommen.
+      </div>
+      <label className="block space-y-1">
+        <div className="text-sm font-medium">Schlaf-Dauer (Std.)</div>
+        <Input
+          type="number"
+          min={0}
+          step={0.5}
+          value={String(sleepHours)}
+          onChange={(e) => setSleepHours(Number(e.target.value))}
+          className="w-24"
+        />
+        <div className="text-xs text-zinc-500">0 = aus (Empfehlung 6–8)</div>
+      </label>
+      <div className="flex items-center gap-3">
+        <Button variant="outline" onClick={save}>
+          <Save size={15} /> Speichern
+        </Button>
+        {msg && <span className="text-sm" onClick={() => setMsg(null)}>{msg}</span>}
+      </div>
+    </Card>
   );
 }
 

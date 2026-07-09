@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 import requests
 from sqlmodel import Session, select
 
-from backend import config, cover, redeem
+from backend import config, cover, diurnal, redeem
 from backend.db import engine
 from backend.models import Account, AppSetting, Event, Proxy
 from backend.proxy_util import to_engine_proxy
@@ -263,11 +263,14 @@ class StreamGateMonitor:
         out: list[str] = []
         with Session(engine) as session:
             cover_cfg = cover.get_config(session)
+            dcfg = diurnal.get_config(session)
             for a in session.exec(
                 select(Account).where(Account.enabled == True)  # noqa: E712
             ).all():
                 if cover.is_excluded(a.username, cover_cfg):
                     continue
+                if not diurnal.is_awake(a.id, dcfg, now):
+                    continue  # schläft -> keine nächtliche Tarn-Präsenz
                 created = a.created_at
                 if created is not None:
                     if created.tzinfo is None:
@@ -349,9 +352,33 @@ class StreamGateMonitor:
         while not self._stop.wait(config.SESSION_CHURN_INTERVAL):
             try:
                 if self._online is True:
+                    self._diurnal_drain()
                     self._maybe_churn()
             except Exception:  # noqa: BLE001
                 logger.exception("session churn tick failed")
+
+    def _diurnal_drain(self) -> None:
+        """Während eines Live-Streams laufende Accounts stoppen, die inzwischen in
+        ihr Schlaf-Fenster gelaufen sind (nicht die von der Tarn-Mechanik
+        ausgenommenen wie patriqcs) — so verschwinden Zuschauer nachts natürlich."""
+        now = datetime.now(timezone.utc)
+        with Session(engine) as session:
+            dcfg = diurnal.get_config(session)
+            if not dcfg.get("enabled", True):
+                return
+            ccfg = cover.get_config(session)
+            rows = {a.username: a.id for a in session.exec(
+                select(Account).where(Account.enabled == True)  # noqa: E712
+            ).all()}
+        for u in self._running_usernames():
+            aid = rows.get(u)
+            if aid is None or cover.is_excluded(u, ccfg):
+                continue
+            if not diurnal.is_awake(aid, dcfg, now) and self.manager.is_running(u):
+                self.manager.stop(u)
+                _record_event(u, "diurnal_sleep",
+                              "Schlaf-Fenster erreicht -> offline (gated)")
+                logger.info("[%s] diurnal sleep -> stopped", u)
 
     def _maybe_churn(self) -> None:
         """Occasionally pause one running account for a random while, so watch
@@ -389,13 +416,20 @@ class StreamGateMonitor:
     def _enabled_ramp_order(self) -> list[str]:
         """Enabled usernames ordered for ramp-up: established accounts first,
         newly added ones later (warm-up — a fresh account shouldn't appear the
-        instant a stream starts). Age noise keeps it from being a rigid order."""
+        instant a stream starts). Age noise keeps it from being a rigid order.
+        Accounts, die gerade in ihrem Tag/Nacht-Schlaf-Fenster sind, werden
+        übersprungen (außer von der Tarn-Mechanik ausgenommene wie patriqcs)."""
         now = datetime.now(timezone.utc)
         rows: list[tuple[str, float]] = []
         with Session(engine) as session:
+            dcfg = diurnal.get_config(session)
+            ccfg = cover.get_config(session)
             for a in session.exec(
                 select(Account).where(Account.enabled == True)  # noqa: E712
             ).all():
+                if not cover.is_excluded(a.username, ccfg) \
+                        and not diurnal.is_awake(a.id, dcfg, now):
+                    continue  # schläft gerade -> nicht hochfahren
                 created = a.created_at
                 if created is None:
                     age = 1e9  # unknown -> treat as very established

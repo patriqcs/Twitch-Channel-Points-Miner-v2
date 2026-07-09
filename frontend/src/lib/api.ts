@@ -500,6 +500,13 @@ export const api = {
     req<CoverConfig>("/api/settings/cover"),
   putCover: (body: { enabled?: boolean; raw?: string; count?: number; offline_presence?: number; offline_hours?: number; exclude?: string }) =>
     req<CoverConfig>("/api/settings/cover", { method: "PUT", body: JSON.stringify(body) }),
+  getDiurnal: () =>
+    req<{ enabled: boolean; sleep_hours: number; max_sleep_hours: number }>("/api/settings/diurnal"),
+  putDiurnal: (body: { enabled?: boolean; sleep_hours?: number }) =>
+    req<{ enabled: boolean; sleep_hours: number; max_sleep_hours: number }>(
+      "/api/settings/diurnal",
+      { method: "PUT", body: JSON.stringify(body) }
+    ),
 
   // system
   startAll: () => req<{ started: string[] }>("/api/system/start-all", { method: "POST" }),
