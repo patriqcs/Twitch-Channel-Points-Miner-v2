@@ -349,14 +349,12 @@ export default function Predictions() {
           {tosBlocked.length > 0 && (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
               <div className="font-medium text-amber-300">
-                🔒 {tosBlocked.length} Account(s) müssen die Wett-AGB einmalig annehmen
+                🔒 {tosBlocked.length} Account(s): AGB-Zustimmung fehlgeschlagen
               </div>
               <div className="mt-1 text-zinc-300">
-                Twitch bietet dafür <b>keine API</b> — die Zustimmung geht nur einmal
-                pro Account über die Website. Sobald wieder eine Wette offen ist:
-                als betroffener Account auf twitch.tv einloggen, im Wett-Fenster
-                irgendeinen Betrag setzen und das Häkchen „Predictions Terms" bestätigen.
-                Danach wettet der Account dauerhaft automatisch mit.
+                Die Wett-AGB werden normalerweise automatisch akzeptiert. Wenn das
+                nicht klappt, ist meist das Login/Token abgelaufen — betroffene
+                Accounts neu einloggen und erneut versuchen.
               </div>
               <div className="mt-2 text-xs text-amber-200/80">
                 Betroffen: {tosBlocked.map((r) => r.username).join(", ")}

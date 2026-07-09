@@ -150,16 +150,40 @@ mutation MakePrediction($input: MakePredictionInput!) {
   }
 }"""
 
+# Wett-AGB einmalig akzeptieren (echte Twitch-Web-Mutation, per Playwright aus
+# dem Prediction-Chunk extrahiert + live verifiziert): frische Accounts geben
+# sonst MUST_ACCEPT_TOS. Gilt account-global (kein Kanal nötig) und dauerhaft.
+_ACCEPT_TOS_MUTATION = """
+mutation AcceptPredictionTermsMutation($input: UpdateUserPredictionSettingsInput!) {
+  updateUserPredictionSettings(input: $input) {
+    error { code }
+    settings { hasAcceptedTOS isTemporaryChatBadgeEnabled }
+  }
+}"""
+
+def accept_tos(token, proxies) -> bool:
+    """Akzeptiert die Wett-AGB für diesen Account. True bei Erfolg/bereits ok."""
+    try:
+        data = redeem._gql(token, proxies, "AcceptPredictionTermsMutation",
+                           _ACCEPT_TOS_MUTATION,
+                           {"input": {"hasAcceptedTOS": True,
+                                      "isTemporaryChatBadgeEnabled": True}})
+    except redeem.RedeemError as e:
+        logger.warning("prediction: AGB-Zustimmung fehlgeschlagen: %s", e)
+        return False
+    res = (data or {}).get("updateUserPredictionSettings") or {}
+    if res.get("error"):
+        logger.warning("prediction: AGB-Zustimmung abgelehnt: %s", res["error"])
+        return False
+    return bool((res.get("settings") or {}).get("hasAcceptedTOS"))
+
 # Vollständige Fehler-Codes aus dem Twitch-Web-Bundle (PredictionError-Enum).
 _ERROR_MESSAGES = {
-    # AGB der Kanalwetten nicht akzeptiert. Twitch bietet dafür KEINE API — die
-    # Zustimmung geht nur einmalig über die offizielle Website/App (erster Tipp
-    # auf eine Wette + Häkchen bei den „Predictions Terms"). Danach wettet der
-    # Account dauerhaft per API. Nachgewiesen: MakePredictionInput hat kein
-    # Zustimmungs-Feld, es gibt keine Accept-Mutation, ProductConsentType kennt
-    # keinen Predictions-Typ.
-    "MUST_ACCEPT_TOS": "AGB nicht akzeptiert — einmalig auf twitch.tv annehmen "
-                       "(siehe Hinweis).",
+    # AGB der Kanalwetten nicht akzeptiert. Wird normalerweise automatisch per
+    # accept_tos() (updateUserPredictionSettings) behoben und der Einsatz
+    # wiederholt; dieser Code bleibt nur sichtbar, wenn die Auto-Zustimmung
+    # selbst scheitert (z.B. Token abgelaufen).
+    "MUST_ACCEPT_TOS": "AGB-Zustimmung fehlgeschlagen (auto-accept griff nicht).",
     "NOT_ENOUGH_POINTS": "Nicht genug Punkte.",
     "EVENT_NOT_ACTIVE": "Wette ist nicht mehr offen.",
     "EVENT_LOCKED": "Wette ist bereits gesperrt.",
@@ -260,9 +284,8 @@ def fetch_active_prediction(token, proxies, channel_login: str) -> dict:
     }
 
 
-def make_prediction(token, proxies, event_id: str, outcome_id: str,
-                    points: int) -> dict:
-    """Setzt `points` auf ein Ergebnis. Returns {ok, message?, code?}."""
+def _make_prediction_once(token, proxies, event_id: str, outcome_id: str,
+                          points: int) -> dict:
     variables = {"input": {
         "eventID": event_id,
         "outcomeID": outcome_id,
@@ -293,6 +316,21 @@ def make_prediction(token, proxies, event_id: str, outcome_id: str,
         return {"ok": False, "code": code,
                 "message": _ERROR_MESSAGES.get(code, f"abgelehnt: {code}")}
     return {"ok": True}
+
+
+def make_prediction(token, proxies, event_id: str, outcome_id: str,
+                    points: int) -> dict:
+    """Setzt `points` auf ein Ergebnis. Returns {ok, message?, code?}.
+
+    Bei MUST_ACCEPT_TOS wird die Wett-AGB einmalig automatisch akzeptiert
+    (updateUserPredictionSettings) und der Einsatz einmal wiederholt — frische
+    Accounts wetten dadurch ohne manuellen Website-Login.
+    """
+    r = _make_prediction_once(token, proxies, event_id, outcome_id, points)
+    if r.get("code") == TOS_BLOCKED_CODE and accept_tos(token, proxies):
+        logger.info("prediction: Wett-AGB automatisch akzeptiert -> neuer Versuch")
+        r = _make_prediction_once(token, proxies, event_id, outcome_id, points)
+    return r
 
 
 def fetch_balances(candidates: list, channel: str, max_workers: int = 8) -> dict:
