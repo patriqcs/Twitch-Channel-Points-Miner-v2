@@ -36,6 +36,17 @@ aus).
   (`error=None`). Der Rest-Fehlerfall (Token abgelaufen) wird im UI als „🔒 …"
   markiert. Achtung: `MakePredictionInput` hat KEIN Zustimmungs-Feld — die
   Zustimmung ist zwingend die separate Mutation.
+- **Anti-Detection der Wett-Requests:** (1) **TV-Fingerprint** — die Requests
+  tragen die TV-Miner-Signatur des Accounts (TV-Client-Id + `ua_app` als
+  User-Agent + `X-Device-Id` + Client-Version + Client-Session-Id) statt
+  Web-Client-Id ohne UA; der Token ist für den TV-Client ausgestellt, damit sind
+  die Wetten von normalem Miner-GQL nicht unterscheidbar (live verifiziert).
+  (2) **Einsatz-Streuung** pro Account (Default 70–100 % statt 100 %).
+  (3) **Breiteres Zeitfenster** (Default 3–15 s, lock-sicher gestaucht).
+- **Offener Audit-Befund:** Einlösen/Chat-Einlösen/Web-Redeem/Heist-Live-Check
+  senden den TV-Token weiterhin hinter Web-Client-Id + `python-requests`-UA ohne
+  `X-Device-Id` — dieselbe Unstimmigkeit, die für die Wetten behoben wurde. Fix
+  analog offen (siehe Memory `project-backend-gql-fingerprint-audit`).
 
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 
