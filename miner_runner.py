@@ -268,7 +268,20 @@ class Reporter(threading.Thread):
                     self._announced = True
                     report(self.username, "status", reason="running")
                     report(self.username, "login")
-                total = sum(int(getattr(s, "channel_points", 0) or 0) for s in streamers)
+                # Nur die Punkte der FARM-Streamer (j4nkttv) melden — die
+                # Tarn-Kanäle sind fürs Dashboard irrelevant. Fallback (kein
+                # Farm-Set, z.B. Standalone): Summe über alle Streamer.
+                farm = getattr(getattr(self.miner, "twitch", None),
+                               "protected_streamers", None) or set()
+                if farm:
+                    total = sum(
+                        int(getattr(s, "channel_points", 0) or 0)
+                        for s in streamers
+                        if str(getattr(s, "username", "")).lower() in farm
+                    )
+                else:
+                    total = sum(int(getattr(s, "channel_points", 0) or 0)
+                                for s in streamers)
                 report(self.username, "points_snapshot", balance=total)
                 if AUTO_FOLLOW_ON_SUB:
                     try:
