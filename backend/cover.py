@@ -34,6 +34,11 @@ COVER_COUNT_KEY = "COVER_COUNT"
 # und sich dann ausloggen (NICHT 24/7). Danach gehen auch die letzten aus.
 COVER_OFFLINE_KEY = "COVER_OFFLINE_PRESENCE"   # Accounts gleichzeitig (rotierend)
 COVER_OFFLINE_HOURS_KEY = "COVER_OFFLINE_HOURS"  # Fensterlänge (Stunden, randomisiert)
+# Von der GESAMTEN Tarn-Mechanik ausgenommene Accounts (kommasepariert): weder
+# Tarn-Kanäle in der Watch-Liste noch Nutzung als Offline-Präsenz. Default: der
+# echte Hauptaccount, dessen Verhalten sauber/real bleiben soll.
+COVER_EXCLUDE_KEY = "COVER_EXCLUDE"
+DEFAULT_COVER_EXCLUDE = "patriqcs"
 
 # Verifizierte, häufig live große deutsche Twitch-Kanäle (Login-Namen). Große
 # Kanäle = die zusätzlichen Watch-Minuten/Follows gehen in der Masse unter.
@@ -101,8 +106,16 @@ def get_config(session: Session) -> dict:
     # ist die Tarnung aus, ist auch die Offline-Präsenz aus.
     if not enabled:
         offline_presence = 0
+    exclude_raw = _get(session, COVER_EXCLUDE_KEY, DEFAULT_COVER_EXCLUDE) or ""
+    exclude = {u.strip().lower() for u in exclude_raw.split(",") if u.strip()}
     return {"enabled": enabled, "pool": pool, "count": count,
-            "offline_presence": offline_presence, "offline_hours": offline_hours}
+            "offline_presence": offline_presence, "offline_hours": offline_hours,
+            "exclude": exclude, "exclude_raw": exclude_raw}
+
+
+def is_excluded(username: str, cfg: dict) -> bool:
+    """True, wenn der Account ganz von der Tarn-Mechanik ausgenommen ist."""
+    return username.lower() in cfg.get("exclude", set())
 
 
 def cover_for_account(account_id: int, cfg: "dict | None" = None,

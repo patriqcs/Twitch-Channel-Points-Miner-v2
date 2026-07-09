@@ -265,6 +265,7 @@ export interface CoverConfig {
   offline_hours: number;
   max_offline_presence: number;
   max_offline_hours: number;
+  exclude: string;
 }
 
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
@@ -497,7 +498,7 @@ export const api = {
     }),
   getCover: () =>
     req<CoverConfig>("/api/settings/cover"),
-  putCover: (body: { enabled?: boolean; raw?: string; count?: number; offline_presence?: number; offline_hours?: number }) =>
+  putCover: (body: { enabled?: boolean; raw?: string; count?: number; offline_presence?: number; offline_hours?: number; exclude?: string }) =>
     req<CoverConfig>("/api/settings/cover", { method: "PUT", body: JSON.stringify(body) }),
 
   // system

@@ -68,6 +68,7 @@ function CoverCard() {
   const [offlinePresence, setOfflinePresence] = useState(2);
   const [offlineHours, setOfflineHours] = useState(3);
   const [maxOfflinePresence, setMaxOfflinePresence] = useState(5);
+  const [exclude, setExclude] = useState("patriqcs");
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,6 +80,7 @@ function CoverCard() {
       setOfflinePresence(data.offline_presence);
       setOfflineHours(data.offline_hours);
       setMaxOfflinePresence(data.max_offline_presence);
+      setExclude(data.exclude);
     }
   }, [data]);
 
@@ -88,12 +90,13 @@ function CoverCard() {
     try {
       const r = await api.putCover({
         enabled, raw, count,
-        offline_presence: offlinePresence, offline_hours: offlineHours,
+        offline_presence: offlinePresence, offline_hours: offlineHours, exclude,
       });
       setRaw(r.raw);
       setCount(r.count);
       setOfflinePresence(r.offline_presence);
       setOfflineHours(r.offline_hours);
+      setExclude(r.exclude);
       setMsg("✅ Gespeichert");
     } catch (e) {
       setMsg(`❌ ${(e as Error).message}`);
@@ -162,6 +165,18 @@ function CoverCard() {
         die Tarn-Kanäle — danach gehen auch die letzten aus. So wirken die Accounts
         wie echte Nutzer, die nach dem Stream noch etwas gucken (nicht 24/7).
       </div>
+      <label className="block space-y-1">
+        <div className="text-sm font-medium">Ausgeschlossene Accounts</div>
+        <Input
+          value={exclude}
+          onChange={(e) => setExclude(e.target.value)}
+          placeholder="patriqcs"
+        />
+        <div className="text-xs text-zinc-500">
+          Kommasepariert — diese Accounts bekommen KEINE Tarn-Kanäle und werden
+          nie als Offline-Präsenz genutzt (Verhalten bleibt sauber/real).
+        </div>
+      </label>
       <Textarea
         rows={8}
         value={raw}

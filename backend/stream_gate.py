@@ -256,13 +256,18 @@ class StreamGateMonitor:
 
     def _offline_candidates(self) -> list[str]:
         """Enabled, established (>= OFFLINE_MIN_AGE_DAYS) usernames — a brand-new
-        account should not appear online while the main channel is offline."""
+        account should not appear online while the main channel is offline.
+        Von der Tarn-Mechanik ausgeschlossene Accounts (z.B. patriqcs) werden nie
+        als Offline-Präsenz genutzt."""
         now = datetime.now(timezone.utc)
         out: list[str] = []
         with Session(engine) as session:
+            cover_cfg = cover.get_config(session)
             for a in session.exec(
                 select(Account).where(Account.enabled == True)  # noqa: E712
             ).all():
+                if cover.is_excluded(a.username, cover_cfg):
+                    continue
                 created = a.created_at
                 if created is not None:
                     if created.tzinfo is None:

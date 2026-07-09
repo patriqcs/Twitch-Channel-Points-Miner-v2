@@ -48,8 +48,11 @@ def get_config(username: str, session: Session = Depends(get_session)):
     # j4nkttv-Live; die Tarn-Kanäle diversifizieren innerhalb dieser Fenster.
     farm_lower = {s.lower() for s in streamers}
     cover_cfg = cover.get_config(session)
-    for ch in cover.cover_for_account(acc.id, cover_cfg, exclude=farm_lower):
-        streamers.append(ch)
+    # Ausgeschlossene Accounts (z.B. der echte Hauptaccount patriqcs) bekommen
+    # KEINE Tarn-Kanäle — ihr Verhalten bleibt sauber/real.
+    if not cover.is_excluded(acc.username, cover_cfg):
+        for ch in cover.cover_for_account(acc.id, cover_cfg, exclude=farm_lower):
+            streamers.append(ch)
 
     proxy = None
     if not acc.no_proxy and acc.proxy_id is not None:

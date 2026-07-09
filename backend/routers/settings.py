@@ -49,6 +49,7 @@ class CoverWrite(BaseModel):
     count: int | None = None          # Tarn-Kanäle pro Account
     offline_presence: int | None = None  # Accounts (rotierend) bei Farm-Offline
     offline_hours: float | None = None    # Fensterlänge (Stunden)
+    exclude: str | None = None        # ausgeschlossene Accounts (kommasepariert)
 
 
 @router.get("/cover")
@@ -66,6 +67,7 @@ def get_cover(session: Session = Depends(get_session)):
         "offline_hours": cfg["offline_hours"],
         "max_offline_presence": cover.MAX_OFFLINE_PRESENCE,
         "max_offline_hours": cover.MAX_OFFLINE_HOURS,
+        "exclude": cfg["exclude_raw"],
     }
 
 
@@ -87,6 +89,8 @@ def put_cover(payload: CoverWrite, session: Session = Depends(get_session)):
     if payload.offline_hours is not None:
         h = max(0.0, min(cover.MAX_OFFLINE_HOURS, float(payload.offline_hours)))
         cover.set_setting(session, cover.COVER_OFFLINE_HOURS_KEY, str(h))
+    if payload.exclude is not None:
+        cover.set_setting(session, cover.COVER_EXCLUDE_KEY, payload.exclude.strip())
     session.commit()
     return get_cover(session)
 
