@@ -27,7 +27,7 @@ from datetime import timedelta
 
 from sqlmodel import Session, select
 
-from backend import config
+from backend import config, cover
 from backend.db import engine
 from backend.models import Account, Event, utcnow
 
@@ -90,10 +90,18 @@ class WatchHealthMonitor:
         ids: dict[str, int] = {}
         no_proxy_map: dict[str, bool] = {}
         with Session(engine) as session:
+            cover_cfg = cover.get_config(session)
             accounts = session.exec(
                 select(Account).where(Account.username.in_(eligible))
             ).all()
             for acc in accounts:
+                # Von der Tarn-Mechanik ausgeschlossene Accounts (Default patriqcs)
+                # sind hier ausgenommen: der echte Hauptaccount hat einen riesigen
+                # Kontostand, der durch Wetten/Heist/Refunds schwankt — die
+                # Kontostand-Differenz taugt NICHT als „schaut/schaut nicht"-Signal,
+                # sonst wird er endlos fälschlich neugestartet.
+                if cover.is_excluded(acc.username, cover_cfg):
+                    continue
                 no_proxy_map[acc.username] = bool(acc.no_proxy)
                 rows = session.exec(
                     select(Event.ts, Event.balance)
