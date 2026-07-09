@@ -43,10 +43,13 @@ aus).
   die Wetten von normalem Miner-GQL nicht unterscheidbar (live verifiziert).
   (2) **Einsatz-Streuung** pro Account (Default 70–100 % statt 100 %).
   (3) **Breiteres Zeitfenster** (Default 3–15 s, lock-sicher gestaucht).
-- **Offener Audit-Befund:** Einlösen/Chat-Einlösen/Web-Redeem/Heist-Live-Check
-  senden den TV-Token weiterhin hinter Web-Client-Id + `python-requests`-UA ohne
-  `X-Device-Id` — dieselbe Unstimmigkeit, die für die Wetten behoben wurde. Fix
-  analog offen (siehe Memory `project-backend-gql-fingerprint-audit`).
+- **Audit-Fixes (2026-07-09, deployed):** Die Fingerprint-Unstimmigkeit wurde
+  auf ALLE Backend-Twitch-Requests ausgeweitet — manuelles + Master-Einlösen,
+  Chat-Einlösen, Web-Redeem und der Heist-Live-Check tragen jetzt die TV-Signatur
+  (zentraler `redeem.fp_headers()`). Zusätzlich: Heist/Chat/Web-IRC von Klartext
+  6667 auf **TLS 6697** umgestellt (direkt + socks-Proxy live getestet), und der
+  stream_gate-Live-Check nutzt die volle TV-Signatur. Details:
+  Memory `project-backend-gql-fingerprint-audit`.
 
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 
