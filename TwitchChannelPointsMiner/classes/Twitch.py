@@ -93,6 +93,9 @@ class Twitch(object):
         "twilight_build_id_pattern",
         "proxies",
         "session",
+        # Farm-Streamer (Logins), die IMMER einen der 2 Watch-Slots behalten —
+        # Tarn-Kanäle dürfen j4nkttv nie verdrängen. Von miner_runner gesetzt.
+        "protected_streamers",
     ]
 
     def __init__(self, username, user_agent, password=None, proxy=None,
@@ -143,6 +146,9 @@ class Twitch(object):
             password=password, proxy=proxy,
         )
         self.running = True
+        # Farm-Streamer, die immer einen Watch-Slot behalten (von miner_runner
+        # befüllt; leer = altes Verhalten). Lowercase-Logins.
+        self.protected_streamers = set()
         # self.integrity = None
         # self.integrity_expire = 0
         self.client_session = token_hex(16)
@@ -488,6 +494,16 @@ class Twitch(object):
 
                 def remaining_watch_amount():
                     return max_watch_amount - len(streamers_watching)
+
+                # Geschützte Farm-Streamer (z.B. j4nkttv) ZUERST reservieren, damit
+                # ein Tarn-Kanal mit frischer Watch-Streak ihnen nie den Slot klaut.
+                # Die restlichen Slots füllt danach die normale Prioritätslogik.
+                if self.protected_streamers:
+                    for index in streamers_index:
+                        if remaining_watch_amount() <= 0:
+                            break
+                        if streamers[index].username.lower() in self.protected_streamers:
+                            streamers_watching.add(index)
 
                 for prior in priority:
                     if remaining_watch_amount() <= 0:

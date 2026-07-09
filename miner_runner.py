@@ -412,6 +412,12 @@ def main():
         ),
     )
 
+    # Farm-Streamer schützen: sie behalten im Watch-Loop immer einen der 2 Slots,
+    # damit Tarn-Kanäle (mit frischer Watch-Streak) ihnen den Slot nie klauen.
+    farm_streamers = {s.lower() for s in (cfg.get("farm_streamers") or [])}
+    if farm_streamers and getattr(miner, "twitch", None) is not None:
+        miner.twitch.protected_streamers = farm_streamers
+
     reporter = Reporter(username, miner)
     reporter.start()
 

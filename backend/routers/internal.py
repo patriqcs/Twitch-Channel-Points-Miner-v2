@@ -71,6 +71,9 @@ def get_config(username: str, session: Session = Depends(get_session)):
     return {
         "username": username,
         "streamers": streamers,
+        # Farm-Streamer (Login-Namen), die im Miner immer einen Watch-Slot
+        # behalten müssen — Tarn-Kanäle dürfen sie nie verdrängen.
+        "farm_streamers": sorted(farm_lower),
         "proxy": proxy,
         # Persistent per-account client fingerprint (see backend/models.py).
         "device_id": acc.device_id,
