@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from backend import config
+from backend import config, cover
 from backend.db import get_session
 from backend.models import Account, AppSetting, Event, Proxy
 from backend.proxy_util import proxy_url
@@ -39,6 +39,17 @@ def get_config(username: str, session: Session = Depends(get_session)):
         for line in (setting.value.splitlines() if setting else [])
         if line.strip() and not line.strip().startswith("#")
     ]
+
+    # Anti-Bot-Tarnung: pro Account eine stabile, verschiedene Teilmenge großer
+    # deutscher Kanäle ANHÄNGEN (Farm-Streamer bleiben zuerst = Priorität). Der
+    # Miner beobachtet/abonniert/folgt diesen zusätzlich -> diversere Follows,
+    # Abos und Watch-Minuten. Das Stream-Gate nutzt weiterhin NUR die
+    # Farm-Streamer (STREAMERS), die Accounts laufen also unverändert nur bei
+    # j4nkttv-Live; die Tarn-Kanäle diversifizieren innerhalb dieser Fenster.
+    farm_lower = {s.lower() for s in streamers}
+    cover_cfg = cover.get_config(session)
+    for ch in cover.cover_for_account(acc.id, cover_cfg, exclude=farm_lower):
+        streamers.append(ch)
 
     proxy = None
     if not acc.no_proxy and acc.proxy_id is not None:

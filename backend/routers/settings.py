@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Global settings: the shared streamer list and generic key/value settings."""
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlmodel import Session
 
+from backend import cover
 from backend.db import get_session
 from backend.models import AppSetting
 from backend.schemas import SettingWrite
@@ -39,6 +41,42 @@ def get_streamers(session: Session = Depends(get_session)):
 def put_streamers(payload: SettingWrite, session: Session = Depends(get_session)):
     _set(session, STREAMERS_KEY, payload.value)
     return {"ok": True}
+
+
+class CoverWrite(BaseModel):
+    enabled: bool | None = None
+    raw: str | None = None      # Pool als Text (eine Kanal-Login pro Zeile)
+    count: int | None = None    # Tarn-Kanäle pro Account
+
+
+@router.get("/cover")
+def get_cover(session: Session = Depends(get_session)):
+    """Tarn-Streamer-Konfiguration (Pool + Anzahl pro Account + an/aus)."""
+    cfg = cover.get_config(session)
+    return {
+        "enabled": cfg["enabled"],
+        "pool": cfg["pool"],
+        "raw": "\n".join(cfg["pool"]),
+        "count": cfg["count"],
+        "max_count": cover.MAX_COVER_COUNT,
+        "default_pool": cover.DEFAULT_COVER_POOL,
+    }
+
+
+@router.put("/cover")
+def put_cover(payload: CoverWrite, session: Session = Depends(get_session)):
+    if payload.enabled is not None:
+        cover.set_setting(session, cover.COVER_ENABLED_KEY,
+                          "1" if payload.enabled else "0")
+    if payload.raw is not None:
+        # normalisiert speichern (eine Login pro Zeile, dedupliziert)
+        cover.set_setting(session, cover.COVER_POOL_KEY,
+                          "\n".join(cover.parse_pool(payload.raw)))
+    if payload.count is not None:
+        c = max(0, min(cover.MAX_COVER_COUNT, int(payload.count)))
+        cover.set_setting(session, cover.COVER_COUNT_KEY, str(c))
+    session.commit()
+    return get_cover(session)
 
 
 @router.get("/{key}")

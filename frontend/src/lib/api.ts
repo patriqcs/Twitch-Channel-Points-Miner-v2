@@ -482,6 +482,15 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ value }),
     }),
+  getCover: () =>
+    req<{ enabled: boolean; pool: string[]; raw: string; count: number; max_count: number; default_pool: string[] }>(
+      "/api/settings/cover"
+    ),
+  putCover: (body: { enabled?: boolean; raw?: string; count?: number }) =>
+    req<{ enabled: boolean; pool: string[]; raw: string; count: number; max_count: number; default_pool: string[] }>(
+      "/api/settings/cover",
+      { method: "PUT", body: JSON.stringify(body) }
+    ),
 
   // system
   startAll: () => req<{ started: string[] }>("/api/system/start-all", { method: "POST" }),
