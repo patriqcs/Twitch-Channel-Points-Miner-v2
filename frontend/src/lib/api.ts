@@ -254,6 +254,19 @@ export interface LoginStart {
   expires_at: string | null;
 }
 
+export interface CoverConfig {
+  enabled: boolean;
+  pool: string[];
+  raw: string;
+  count: number;
+  max_count: number;
+  default_pool: string[];
+  offline_presence: number;
+  offline_hours: number;
+  max_offline_presence: number;
+  max_offline_hours: number;
+}
+
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -483,14 +496,9 @@ export const api = {
       body: JSON.stringify({ value }),
     }),
   getCover: () =>
-    req<{ enabled: boolean; pool: string[]; raw: string; count: number; max_count: number; default_pool: string[] }>(
-      "/api/settings/cover"
-    ),
-  putCover: (body: { enabled?: boolean; raw?: string; count?: number }) =>
-    req<{ enabled: boolean; pool: string[]; raw: string; count: number; max_count: number; default_pool: string[] }>(
-      "/api/settings/cover",
-      { method: "PUT", body: JSON.stringify(body) }
-    ),
+    req<CoverConfig>("/api/settings/cover"),
+  putCover: (body: { enabled?: boolean; raw?: string; count?: number; offline_presence?: number; offline_hours?: number }) =>
+    req<CoverConfig>("/api/settings/cover", { method: "PUT", body: JSON.stringify(body) }),
 
   // system
   startAll: () => req<{ started: string[] }>("/api/system/start-all", { method: "POST" }),

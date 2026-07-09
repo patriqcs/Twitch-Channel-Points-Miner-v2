@@ -28,6 +28,12 @@ from backend.models import AppSetting
 COVER_ENABLED_KEY = "COVER_ENABLED"
 COVER_POOL_KEY = "COVER_STREAMERS"
 COVER_COUNT_KEY = "COVER_COUNT"
+# Offline-Präsenz: wenn KEIN Farm-Streamer live ist, bleibt eine kleine,
+# rotierende Minderheit noch für ein BEGRENZTES Zeitfenster online und schaut die
+# Tarn-Kanäle — wie echte Nutzer, die nach dem Stream noch etwas anderes gucken
+# und sich dann ausloggen (NICHT 24/7). Danach gehen auch die letzten aus.
+COVER_OFFLINE_KEY = "COVER_OFFLINE_PRESENCE"   # Accounts gleichzeitig (rotierend)
+COVER_OFFLINE_HOURS_KEY = "COVER_OFFLINE_HOURS"  # Fensterlänge (Stunden, randomisiert)
 
 # Verifizierte, häufig live große deutsche Twitch-Kanäle (Login-Namen). Große
 # Kanäle = die zusätzlichen Watch-Minuten/Follows gehen in der Masse unter.
@@ -39,6 +45,11 @@ DEFAULT_COVER_POOL = [
 ]
 DEFAULT_COVER_COUNT = 3
 MAX_COVER_COUNT = 8
+# Offline-Präsenz-Defaults: 2 Accounts gleichzeitig (rotierend), ~3 h Fenster.
+DEFAULT_OFFLINE_PRESENCE = 2
+MAX_OFFLINE_PRESENCE = 5
+DEFAULT_OFFLINE_HOURS = 3.0
+MAX_OFFLINE_HOURS = 12.0
 
 
 def _get(session: Session, key: str, default=None):
@@ -74,7 +85,24 @@ def get_config(session: Session) -> dict:
     except (TypeError, ValueError):
         count = DEFAULT_COVER_COUNT
     count = max(0, min(MAX_COVER_COUNT, count))
-    return {"enabled": enabled, "pool": pool, "count": count}
+    try:
+        offline_presence = int(float(_get(session, COVER_OFFLINE_KEY,
+                                          DEFAULT_OFFLINE_PRESENCE)))
+    except (TypeError, ValueError):
+        offline_presence = DEFAULT_OFFLINE_PRESENCE
+    offline_presence = max(0, min(MAX_OFFLINE_PRESENCE, offline_presence))
+    try:
+        offline_hours = float(_get(session, COVER_OFFLINE_HOURS_KEY,
+                                   DEFAULT_OFFLINE_HOURS))
+    except (TypeError, ValueError):
+        offline_hours = DEFAULT_OFFLINE_HOURS
+    offline_hours = max(0.0, min(MAX_OFFLINE_HOURS, offline_hours))
+    # Offline-Präsenz braucht Tarn-Kanäle (sonst schauen die Accounts nichts):
+    # ist die Tarnung aus, ist auch die Offline-Präsenz aus.
+    if not enabled:
+        offline_presence = 0
+    return {"enabled": enabled, "pool": pool, "count": count,
+            "offline_presence": offline_presence, "offline_hours": offline_hours}
 
 
 def cover_for_account(account_id: int, cfg: "dict | None" = None,

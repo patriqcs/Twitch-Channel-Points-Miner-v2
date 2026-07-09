@@ -32,7 +32,7 @@ from datetime import datetime, timezone
 import requests
 from sqlmodel import Session, select
 
-from backend import config, redeem
+from backend import config, cover, redeem
 from backend.db import engine
 from backend.models import Account, AppSetting, Event, Proxy
 from backend.proxy_util import to_engine_proxy
@@ -41,6 +41,15 @@ from TwitchChannelPointsMiner.constants import GQLOperations
 logger = logging.getLogger("stream_gate")
 
 STREAMERS_KEY = "STREAMERS"
+
+# Offline-Präsenz: Innerhalb des begrenzten Fensters (cover.offline_hours) wird
+# die kleine Präsenz-Gruppe in diesem Intervall rotiert, damit kein Account die
+# ganze Zeit durchgehend online ist (realistische Sitzungslängen).
+OFFLINE_ROTATE_MIN = 1500.0   # 25 min
+OFFLINE_ROTATE_MAX = 2700.0   # 45 min
+# Präsenz-Accounts sollen etabliert sein (kein brandneuer Account taucht auf,
+# während der Hauptkanal offline ist) — Mindestalter in Tagen.
+OFFLINE_MIN_AGE_DAYS = 3.0
 
 
 def _record_event(username: str, reason: str, message: str) -> None:
@@ -240,6 +249,96 @@ class StreamGateMonitor:
             target=self._ramp_down, args=(gen,), name="gate-rampdown", daemon=True
         ).start()
 
+    # ---- offline cover presence (time-boxed, rotating minority) ----
+    def _cover_cfg(self) -> dict:
+        with Session(engine) as session:
+            return cover.get_config(session)
+
+    def _offline_candidates(self) -> list[str]:
+        """Enabled, established (>= OFFLINE_MIN_AGE_DAYS) usernames — a brand-new
+        account should not appear online while the main channel is offline."""
+        now = datetime.now(timezone.utc)
+        out: list[str] = []
+        with Session(engine) as session:
+            for a in session.exec(
+                select(Account).where(Account.enabled == True)  # noqa: E712
+            ).all():
+                created = a.created_at
+                if created is not None:
+                    if created.tzinfo is None:
+                        created = created.replace(tzinfo=timezone.utc)
+                    age = (now - created).total_seconds() / 86400.0
+                    if age < OFFLINE_MIN_AGE_DAYS:
+                        continue
+                out.append(a.username)
+        return out
+
+    def _offline_presence_loop(self, gen: int, presence: int,
+                               window_seconds: float) -> None:
+        """Keep `presence` accounts (rotating) online for a bounded window while
+        the farm channel is offline, so accounts occasionally watch the cover
+        channels like a real user does after a stream ends — then everyone stops.
+        Aborts immediately if the channel goes live again (gen superseded)."""
+        import time
+        deadline = time.monotonic() + window_seconds
+        logger.info("offline cover presence: %d account(s), window %.0f min",
+                    presence, window_seconds / 60.0)
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            # rotate the presence set, then wait a rotation interval (bounded by
+            # the remaining window)
+            self._apply_offline_target(gen, presence)
+            if self._superseded(gen):
+                return  # went live / stopped -> ramp-up owns the fleet now
+            gap = min(random.uniform(OFFLINE_ROTATE_MIN, OFFLINE_ROTATE_MAX),
+                      max(1.0, remaining))
+            if not self._sleep_until(gen, gap):
+                return
+        # window elapsed -> drain the remaining presence accounts to zero
+        if self._superseded(gen):
+            return
+        logger.info("offline cover presence window ended -> stopping all")
+        for u in self._running_usernames():
+            if self._superseded(gen):
+                return
+            if self.manager.is_running(u):
+                self.manager.stop(u)
+                _record_event(u, "offline_presence_end",
+                              "Tarn-Fenster beendet -> stop")
+            if not self._sleep_until(gen, random.uniform(
+                    config.STREAM_GATE_DRAIN_STEP_MIN,
+                    config.STREAM_GATE_DRAIN_STEP_MAX)):
+                return
+
+    def _apply_offline_target(self, gen: int, presence: int) -> None:
+        """Pick a fresh random presence subset and reconcile the running set to
+        it (start the newly picked, stop the rotated-out), staggered."""
+        candidates = self._offline_candidates()
+        if not candidates or presence <= 0:
+            return
+        target = set(random.sample(candidates, min(presence, len(candidates))))
+        running = set(self._running_usernames())
+        # rotate OUT (stop those no longer selected)
+        for u in running - target:
+            if self._superseded(gen):
+                return
+            if self.manager.is_running(u):
+                self.manager.stop(u)
+                _record_event(u, "offline_presence_end",
+                              "Tarn-Präsenz-Wechsel -> stop")
+            self._sleep_until(gen, random.uniform(5.0, 20.0))
+        # rotate IN (start the newly selected)
+        for u in target - running:
+            if self._superseded(gen):
+                return
+            if not self.manager.is_running(u) and self.manager.start(u):
+                _record_event(u, "offline_presence",
+                              "Farm offline -> Tarn-Kanäle schauen (gated)")
+                logger.info("[%s] offline cover presence (farm offline)", u)
+            self._sleep_until(gen, random.uniform(15.0, 45.0))
+
     # ---- variable session presence (churn) ----
     def _churn_loop(self) -> None:
         while not self._stop.wait(config.SESSION_CHURN_INTERVAL):
@@ -343,10 +442,24 @@ class StreamGateMonitor:
                 logger.info("[%s] started (streamer live)", u)
 
     def _ramp_down(self, gen: int) -> None:
+        # Optionale Offline-Präsenz: eine kleine, etablierte Minderheit bleibt für
+        # ein begrenztes Fenster online (schaut die Tarn-Kanäle). Der Rest wird
+        # gestaffelt gestoppt. presence=0 -> altes Verhalten (alle stoppen).
+        cfg = self._cover_cfg()
+        presence = cfg.get("offline_presence", 0)
         accounts = self._running_usernames()
         random.shuffle(accounts)
-        logger.info("stream-gate ramp-down: %d running account(s)", len(accounts))
-        for i, u in enumerate(accounts):
+        keep: set[str] = set()
+        if presence > 0:
+            established = set(self._offline_candidates())
+            for u in accounts:
+                if len(keep) >= presence:
+                    break
+                if u in established:
+                    keep.add(u)
+        logger.info("stream-gate ramp-down: %d running account(s)%s", len(accounts),
+                    f", keep {len(keep)} as offline presence" if keep else "")
+        for i, u in enumerate([a for a in accounts if a not in keep]):
             if i > 0:
                 gap = random.uniform(
                     config.STREAM_GATE_DRAIN_STEP_MIN, config.STREAM_GATE_DRAIN_STEP_MAX
@@ -359,6 +472,13 @@ class StreamGateMonitor:
                 _record_event(u, "stream_offline", "streamer offline -> stop (gated)")
                 self.manager.stop(u)
                 logger.info("[%s] stopped (streamer offline)", u)
+        # Nach dem Drain die zeitlich begrenzte, rotierende Offline-Präsenz fahren.
+        if presence > 0 and not self._superseded(gen):
+            hours = cfg.get("offline_hours", 0.0)
+            if hours > 0:
+                # Fensterlänge randomisieren (feste Dauer wäre selbst ein Muster).
+                window = random.uniform(hours * 0.5, hours) * 3600.0
+                self._offline_presence_loop(gen, presence, window)
 
     def _await_proxies(self, gen: int) -> bool:
         """Wait until at least one assigned proxy is reachable (bounded by

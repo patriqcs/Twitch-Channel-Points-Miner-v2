@@ -45,13 +45,15 @@ def put_streamers(payload: SettingWrite, session: Session = Depends(get_session)
 
 class CoverWrite(BaseModel):
     enabled: bool | None = None
-    raw: str | None = None      # Pool als Text (eine Kanal-Login pro Zeile)
-    count: int | None = None    # Tarn-Kanäle pro Account
+    raw: str | None = None            # Pool als Text (eine Kanal-Login pro Zeile)
+    count: int | None = None          # Tarn-Kanäle pro Account
+    offline_presence: int | None = None  # Accounts (rotierend) bei Farm-Offline
+    offline_hours: float | None = None    # Fensterlänge (Stunden)
 
 
 @router.get("/cover")
 def get_cover(session: Session = Depends(get_session)):
-    """Tarn-Streamer-Konfiguration (Pool + Anzahl pro Account + an/aus)."""
+    """Tarn-Streamer-Konfiguration (Pool + Anzahl + Offline-Präsenz)."""
     cfg = cover.get_config(session)
     return {
         "enabled": cfg["enabled"],
@@ -60,6 +62,10 @@ def get_cover(session: Session = Depends(get_session)):
         "count": cfg["count"],
         "max_count": cover.MAX_COVER_COUNT,
         "default_pool": cover.DEFAULT_COVER_POOL,
+        "offline_presence": cfg["offline_presence"],
+        "offline_hours": cfg["offline_hours"],
+        "max_offline_presence": cover.MAX_OFFLINE_PRESENCE,
+        "max_offline_hours": cover.MAX_OFFLINE_HOURS,
     }
 
 
@@ -75,6 +81,12 @@ def put_cover(payload: CoverWrite, session: Session = Depends(get_session)):
     if payload.count is not None:
         c = max(0, min(cover.MAX_COVER_COUNT, int(payload.count)))
         cover.set_setting(session, cover.COVER_COUNT_KEY, str(c))
+    if payload.offline_presence is not None:
+        p = max(0, min(cover.MAX_OFFLINE_PRESENCE, int(payload.offline_presence)))
+        cover.set_setting(session, cover.COVER_OFFLINE_KEY, str(p))
+    if payload.offline_hours is not None:
+        h = max(0.0, min(cover.MAX_OFFLINE_HOURS, float(payload.offline_hours)))
+        cover.set_setting(session, cover.COVER_OFFLINE_HOURS_KEY, str(h))
     session.commit()
     return get_cover(session)
 

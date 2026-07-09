@@ -65,6 +65,9 @@ function CoverCard() {
   const [raw, setRaw] = useState("");
   const [count, setCount] = useState(3);
   const [maxCount, setMaxCount] = useState(8);
+  const [offlinePresence, setOfflinePresence] = useState(2);
+  const [offlineHours, setOfflineHours] = useState(3);
+  const [maxOfflinePresence, setMaxOfflinePresence] = useState(5);
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => {
@@ -73,6 +76,9 @@ function CoverCard() {
       setRaw(data.raw);
       setCount(data.count);
       setMaxCount(data.max_count);
+      setOfflinePresence(data.offline_presence);
+      setOfflineHours(data.offline_hours);
+      setMaxOfflinePresence(data.max_offline_presence);
     }
   }, [data]);
 
@@ -80,9 +86,14 @@ function CoverCard() {
 
   const save = async () => {
     try {
-      const r = await api.putCover({ enabled, raw, count });
+      const r = await api.putCover({
+        enabled, raw, count,
+        offline_presence: offlinePresence, offline_hours: offlineHours,
+      });
       setRaw(r.raw);
       setCount(r.count);
+      setOfflinePresence(r.offline_presence);
+      setOfflineHours(r.offline_hours);
       setMsg("✅ Gespeichert");
     } catch (e) {
       setMsg(`❌ ${(e as Error).message}`);
@@ -106,7 +117,7 @@ function CoverCard() {
         unberührt (Accounts laufen weiter nur bei Farm-Streamer-Live), die
         Tarn-Kanäle diversifizieren nur innerhalb dieser Zeiten. ({poolCount} im Pool)
       </div>
-      <div className="flex items-end gap-3">
+      <div className="flex flex-wrap items-start gap-5">
         <label className="block space-y-1">
           <div className="text-sm font-medium">Kanäle pro Account</div>
           <Input
@@ -119,6 +130,37 @@ function CoverCard() {
           />
           <div className="text-xs text-zinc-500">0–{maxCount} (Empfehlung 2–4)</div>
         </label>
+        <label className="block space-y-1">
+          <div className="text-sm font-medium">Offline-Präsenz (Accounts)</div>
+          <Input
+            type="number"
+            min={0}
+            max={maxOfflinePresence}
+            value={String(offlinePresence)}
+            onChange={(e) => setOfflinePresence(Number(e.target.value))}
+            className="w-24"
+          />
+          <div className="text-xs text-zinc-500">0 = aus · 0–{maxOfflinePresence}</div>
+        </label>
+        <label className="block space-y-1">
+          <div className="text-sm font-medium">Offline-Fenster (Std.)</div>
+          <Input
+            type="number"
+            min={0}
+            step={0.5}
+            value={String(offlineHours)}
+            onChange={(e) => setOfflineHours(Number(e.target.value))}
+            className="w-24"
+          />
+          <div className="text-xs text-zinc-500">randomisiert ~½–voll</div>
+        </label>
+      </div>
+      <div className="text-xs text-zinc-500">
+        <b>Offline-Präsenz:</b> Wenn kein Farm-Streamer live ist, bleiben so viele
+        Accounts (rotierend, nur etablierte) noch für ein zufälliges Fenster von
+        ca. der Hälfte bis zur vollen eingestellten Stundenzahl online und schauen
+        die Tarn-Kanäle — danach gehen auch die letzten aus. So wirken die Accounts
+        wie echte Nutzer, die nach dem Stream noch etwas gucken (nicht 24/7).
       </div>
       <Textarea
         rows={8}
