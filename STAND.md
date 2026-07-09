@@ -57,6 +57,11 @@ aus).
   statt „schaut nur j4nkttv"-Muster. Farm-Streamer bleiben priorisiert; das
   Stream-Gate triggert weiterhin nur auf die Farm-Streamer. Konfigurierbar unter
   Einstellungen → „Tarn-Kanäle". Details: Memory `project-cover-streamers`.
+- **Offline-Präsenz:** Bei Farm-Offline bleibt eine kleine, rotierende Minderheit
+  (Default 2, nur etablierte Accounts) für ein zufälliges Fenster (~1,5–3 h)
+  online und schaut die Tarn-Kanäle, danach gehen auch die letzten aus (kein
+  24/7). Im `stream_gate` (`_offline_presence_loop`), konfigurierbar
+  (Offline-Präsenz + Offline-Fenster); 0 = altes Verhalten (alle stoppen).
 
 ## Neu (2026-07-08, „Account anlegen"-Tab — implementiert + lokal getestet)
 
