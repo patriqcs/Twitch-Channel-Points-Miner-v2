@@ -77,6 +77,14 @@ aus).
   `backend/diurnal.py`) — schläft → wird nicht hochgefahren, keine Offline-Präsenz,
   wird beim Einschlafen gestoppt. Abend-Streams unberührt, patriqcs ausgenommen.
   Konfigurierbar unter Einstellungen → „Tag/Nacht-Rhythmus".
+- **Farm-Slot-Schutz:** j4nkttv behält im Watch-Loop (max. 2 Kanäle) immer einen
+  Slot — Tarn-Kanäle mit frischer Watch-Streak können ihn nicht mehr verdrängen
+  (`Twitch.protected_streamers`, aus internal `farm_streamers`).
+- **Watch-Monitor-Ausnahme:** cover-excludierte Accounts (patriqcs) werden nicht
+  mehr wegen „earned 0 vs. Kohorte" neugestartet (patriqcs' Kontostand schwankt
+  durch Wetten/Heist → False-Positive; er schaut+verdient nachweislich).
+- **Dashboard-Punkte = nur Farm-Streamer:** Der gemeldete Kontostand zählt nur
+  noch j4nkttv (nicht die Summe inkl. Tarn-Kanäle). Live verifiziert.
 - Recherche-Ergebnis (Ban-Vermeidung): größter offener Hebel ist die **IP**
   (Datacenter/Mullvad → Residential, eine feste IP pro Account) + entzerrte
   Account-Erstellung + Telefon-Verify — operativ, nicht Code. Chat-Aktivität als
