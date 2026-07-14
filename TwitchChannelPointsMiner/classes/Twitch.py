@@ -91,6 +91,14 @@ class Twitch(object):
         # "integrity_expire",
         "client_session",
         "client_version",
+        # M1: gecachte Client-Version (kein Homepage-GET pro GQL-Call)
+        "_client_version_checked",
+        "_client_version_ttl",
+        # N1: geo-passendes Accept-Language auf GQL
+        "accept_language",
+        # H3: per-Account persistente Watch-Kadenz (Basis + Jitter-Breite)
+        "watch_base",
+        "watch_jitter",
         "twilight_build_id_pattern",
         "proxies",
         "session",
