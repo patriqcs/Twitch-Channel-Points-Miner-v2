@@ -42,6 +42,7 @@ from TwitchChannelPointsMiner.classes.TwitchLogin import TwitchLogin
 from TwitchChannelPointsMiner.constants import (
     CLIENT_ID,
     CLIENT_VERSION,
+    GQL_FULL_QUERIES,
     URL,
     GQLOperations,
 )
@@ -434,12 +435,59 @@ class Twitch(object):
             logger.debug(
                 f"Data: {json_data}, Status code: {response.status_code}, Content: {response.text}"
             )
-            return response.json()
+            return self.__handle_gql_response(json_data, response.json())
         except requests.exceptions.RequestException as e:
-            logger.error(
-                f"Error with GQLOperations ({json_data['operationName']}): {e}"
+            operation = (
+                json_data.get("operationName", "unknown")
+                if isinstance(json_data, dict)
+                else "batch"
             )
+            logger.error(f"Error with GQLOperations ({operation}): {e}")
             return {}
+
+    def __handle_gql_response(self, json_data, result):
+        # Batch-Requests (Liste) elementweise behandeln, Form bleibt erhalten.
+        if isinstance(json_data, list):
+            if isinstance(result, list) and len(result) == len(json_data):
+                return [
+                    self.__handle_gql_response(req, res)
+                    for req, res in zip(json_data, result)
+                ]
+            return result
+        if not isinstance(result, dict):
+            return {}
+        if "data" in result:
+            return result
+
+        # Kein "data": GQL-Fehlerantwort. Twitchs APQ-Cache verwirft alte
+        # Persisted-Query-Hashes; der echte Client sendet dann den vollen
+        # Query-Text nach — das tun wir hier auch, genau einmal (der Retry
+        # trägt "query" und landet nie wieder in diesem Zweig).
+        errors = result.get("errors") or []
+        messages = {
+            e.get("message") for e in errors if isinstance(e, dict)
+        }
+        operation = json_data.get("operationName", "unknown")
+        if (
+            "PersistedQueryNotFound" in messages
+            and "query" not in json_data
+            and operation in GQL_FULL_QUERIES
+        ):
+            logger.warning(
+                f"Persisted query hash for {operation} was rejected by Twitch, "
+                "retrying with the full query text."
+            )
+            retry = {
+                "operationName": operation,
+                "variables": json_data.get("variables", {}),
+                "query": GQL_FULL_QUERIES[operation],
+            }
+            return self.post_gql_request(retry)
+
+        # Fehlerantwort loggen und {} liefern, damit Aufrufer nicht an
+        # response["data"] sterben (KeyError-Crash-Loop beim Start).
+        logger.error(f"Invalid GQL response for {operation}: {result}")
+        return {}
 
     # Request for Integrity Token
     # Twitch needs Authorization, Client-Id, X-Device-Id to generate JWT which is used for authorize gql requests

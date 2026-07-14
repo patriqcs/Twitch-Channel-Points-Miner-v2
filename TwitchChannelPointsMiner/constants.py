@@ -270,3 +270,51 @@ class GQLOperations:
             }
         }
     }
+
+
+# Volltext-Fallbacks für persistierte Queries. Twitch verwaltet die Hashes als
+# APQ-Cache (Automatic Persisted Queries) und verwirft alte Einträge, sobald
+# der Webclient eine Operation nicht mehr in exakt diesem Wortlaut sendet
+# ("PersistedQueryNotFound", Rotation zuletzt 2026-07-14). Der echte Client
+# schickt dann transparent den vollen Query-Text nach — post_gql_request macht
+# über diese Tabelle dasselbe. Die Feldauswahl deckt genau ab, was der Miner
+# aus den Antworten liest (gegen gql.twitch.tv validiert).
+GQL_FULL_QUERIES = {
+    "ChannelPointsContext": (
+        "query ChannelPointsContext($channelLogin: String!) { "
+        "community: user(login: $channelLogin) { id channel { id "
+        "self { communityPoints { balance availableClaim { id } "
+        "activeMultipliers { factor } } } "
+        "communityPointsSettings { goals { id title isInStock pointsContributed "
+        "amountNeeded perStreamUserMaximumContribution status } } } } }"
+    ),
+    "ModViewChannelQuery": (
+        "query ModViewChannelQuery($channelLogin: String!) { "
+        "user(login: $channelLogin) { id self { isModerator } } }"
+    ),
+    "CommunityMomentCallout_Claim": (
+        "mutation CommunityMomentCallout_Claim($input: ClaimCommunityMomentInput!) { "
+        "claimCommunityMoment(input: $input) { moment { id } error } }"
+    ),
+    "DropsHighlightService_AvailableDrops": (
+        "query DropsHighlightService_AvailableDrops($channelID: ID!) { "
+        "channel(id: $channelID) { id viewerDropCampaigns { id } } }"
+    ),
+    "DropCampaignDetails": (
+        "query DropCampaignDetails($dropID: ID!, $channelLogin: String!) { "
+        "user(login: $channelLogin) { id dropCampaign(id: $dropID) { id name status "
+        "startAt endAt game { id displayName } allow { channels { id } } "
+        "timeBasedDrops { id name startAt endAt requiredMinutesWatched "
+        "benefitEdges { benefit { id name } } } } } }"
+    ),
+    "PlaybackAccessToken": (
+        "query PlaybackAccessToken($login: String!, $isLive: Boolean!, "
+        "$isVod: Boolean!, $vodID: ID!, $playerType: String!) { "
+        'streamPlaybackAccessToken(channelName: $login, params: {platform: "web", '
+        'playerBackend: "mediaplayer", playerType: $playerType}) '
+        "@include(if: $isLive) { value signature } "
+        'videoPlaybackAccessToken(id: $vodID, params: {platform: "web", '
+        'playerBackend: "mediaplayer", playerType: $playerType}) '
+        "@include(if: $isVod) { value signature } }"
+    ),
+}
