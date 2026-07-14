@@ -36,7 +36,7 @@ from backend import config, cover, diurnal, redeem
 from backend.db import engine
 from backend.models import Account, AppSetting, Event, Proxy
 from backend.proxy_util import to_engine_proxy
-from TwitchChannelPointsMiner.constants import GQLOperations
+from TwitchChannelPointsMiner.constants import GQL_FULL_QUERIES, GQLOperations
 
 logger = logging.getLogger("stream_gate")
 
@@ -206,22 +206,43 @@ class StreamGateMonitor:
         json_data = copy.deepcopy(GQLOperations.VideoPlayerStreamInfoOverlayChannel)
         json_data["variables"] = {"channel": login}
         try:
-            resp = requests.post(
-                GQLOperations.url,
-                json=json_data,
-                # Volle TV-Client-Signatur (Client-Id + TV-UA + Client-Version +
-                # Client-Session-Id) statt nur Client-Id + generischer TV-UA — der
-                # anonyme Live-Check sieht damit wie ein echter TV-Client aus.
-                headers=redeem.fp_headers(),
-                timeout=config.STREAM_GATE_HTTP_TIMEOUT,
-            )
-            resp.raise_for_status()
-            user = resp.json()["data"]["user"]
+            data = StreamGateMonitor._gql_post(json_data)
+            # Twitch verwirft persistierte Hashes (APQ). Ohne Fallback liefert
+            # dieser Check dann dauerhaft "unknown" → nach FAILOPEN_AFTER Strikes
+            # geht das Gate fälschlich ONLINE (Flotte mined trotz Offline-Stream,
+            # Anti-Ban-Gate faktisch aus). Einmal mit Volltext nachsetzen.
+            if any(
+                isinstance(e, dict)
+                and e.get("message") == "PersistedQueryNotFound"
+                for e in (data.get("errors") or [])
+            ):
+                retry = {
+                    "operationName": "VideoPlayerStreamInfoOverlayChannel",
+                    "variables": {"channel": login},
+                    "query": GQL_FULL_QUERIES[
+                        "VideoPlayerStreamInfoOverlayChannel"],
+                }
+                data = StreamGateMonitor._gql_post(retry)
+            user = (data.get("data") or {}).get("user")
             if user is None:
                 return None  # unknown login / malformed -> don't treat as offline
             return user["stream"] is not None
         except Exception:  # noqa: BLE001
             return None
+
+    @staticmethod
+    def _gql_post(json_data) -> dict:
+        resp = requests.post(
+            GQLOperations.url,
+            json=json_data,
+            # Volle TV-Client-Signatur (Client-Id + TV-UA + Client-Version +
+            # Client-Session-Id) statt nur Client-Id + generischer TV-UA — der
+            # anonyme Live-Check sieht damit wie ein echter TV-Client aus.
+            headers=redeem.fp_headers(),
+            timeout=config.STREAM_GATE_HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return resp.json()
 
     # ---- transitions ----
     def _next_gen(self) -> int:

@@ -37,7 +37,11 @@ class _TimeoutHTTPAdapter(HTTPAdapter):
         if kwargs.get("timeout") is None:
             kwargs["timeout"] = self._timeout
         return super().send(request, **kwargs)
-from TwitchChannelPointsMiner.constants import CLIENT_ID, GQLOperations
+from TwitchChannelPointsMiner.constants import (
+    CLIENT_ID,
+    GQL_FULL_QUERIES,
+    GQLOperations,
+)
 
 from datetime import datetime, timedelta, timezone
 from time import sleep
@@ -378,18 +382,39 @@ class TwitchLogin(object):
     def __set_user_id(self):
         json_data = copy.deepcopy(GQLOperations.GetIDFromLogin)
         json_data["variables"]["login"] = self.username
-        response = self.session.post(GQLOperations.url, json=json_data)
+        json_response = self.__post_gql(json_data)
+        # Twitch verwirft persistierte Hashes (APQ) — bei PersistedQueryNotFound
+        # einmal mit dem Volltext nachsetzen, sonst schlägt die ID-Auflösung
+        # neuer Accounts bei einer Hash-Rotation dauerhaft fehl.
+        if self.__is_persisted_query_miss(json_response):
+            retry = {
+                "operationName": "GetIDFromLogin",
+                "variables": {"login": self.username},
+                "query": GQL_FULL_QUERIES["GetIDFromLogin"],
+            }
+            json_response = self.__post_gql(retry)
 
-        if response.status_code == 200:
-            json_response = response.json()
-            if (
-                "data" in json_response
-                and "user" in json_response["data"]
-                and json_response["data"]["user"]["id"] is not None
-            ):
-                self.user_id = json_response["data"]["user"]["id"]
-                return True
+        user = (json_response.get("data") or {}).get("user") or {}
+        if user.get("id") is not None:
+            self.user_id = user["id"]
+            return True
         return False
+
+    def __post_gql(self, json_data):
+        try:
+            response = self.session.post(GQLOperations.url, json=json_data)
+            if response.status_code == 200:
+                return response.json()
+        except (requests.exceptions.RequestException, ValueError):
+            pass
+        return {}
+
+    @staticmethod
+    def __is_persisted_query_miss(json_response):
+        return any(
+            isinstance(e, dict) and e.get("message") == "PersistedQueryNotFound"
+            for e in (json_response.get("errors") or [])
+        )
 
     def get_auth_token(self):
         return self.get_cookie_value("auth-token")

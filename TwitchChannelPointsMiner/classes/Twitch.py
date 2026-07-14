@@ -81,6 +81,12 @@ class _TimeoutHTTPAdapter(HTTPAdapter):
 
 
 class Twitch(object):
+    # Operationen, deren persistierter Hash von Twitch verworfen wurde
+    # (PersistedQueryNotFound). Prozessweit (Klassenattribut, nicht in
+    # __slots__), damit alle Account-Instanzen nach dem ersten Miss direkt den
+    # Volltext senden statt jedes Mal erneut den toten Hash zu probieren.
+    _dead_persisted_ops = set()
+
     __slots__ = [
         "cookies_file",
         "user_agent",
@@ -304,11 +310,15 @@ class Twitch(object):
             GQLOperations.VideoPlayerStreamInfoOverlayChannel)
         json_data["variables"] = {"channel": streamer.username}
         response = self.post_gql_request(json_data)
-        if response != {}:
-            if response["data"]["user"]["stream"] is None:
-                raise StreamerIsOfflineException
-            else:
-                return response["data"]["user"]
+        # {} (Transport-/GQL-Fehler) oder fehlende user/stream-Daten heißt
+        # "Status unbekannt". Das als offline behandeln (der Aufrufer prüft im
+        # nächsten Zyklus erneut) ist sicher; den Streamer im Zweifel online zu
+        # setzen wäre es NICHT (IRC-Join auf toten Kanal + stream.payload=None →
+        # wiederholter Crash der Minute-Watched-Schleife).
+        user = (response.get("data") or {}).get("user") if response else None
+        if not user or user.get("stream") is None:
+            raise StreamerIsOfflineException
+        return user
 
     def check_streamer_online(self, streamer):
         if time.time() < streamer.offline_at + 60:
@@ -336,12 +346,14 @@ class Twitch(object):
             json_response = self.post_gql_request(json_data)
             if json_response != {}:
                 break
-            # An empty response means a transport failure (proxy blip), NOT a
-            # missing streamer. post_gql_request cannot distinguish the two, so
-            # back off and retry here: otherwise a momentary blip raises
-            # StreamerDoesNotExistException and the streamer is permanently
-            # dropped for the whole run while the account still reports healthy.
-            time.sleep(1.5 * (attempt + 1))
+            # {} bedeutet meist einen Transportfehler (Proxy-Blip), NICHT einen
+            # fehlenden Streamer — deshalb Backoff und Retry statt sofortiger
+            # StreamerDoesNotExistException. Persistente GQL-Fehler (auch eine
+            # Hash-Rotation von GetIDFromLogin) hat post_gql_request bereits
+            # zentral geloggt und per Volltext-Fallback abgefangen; bleibt es {},
+            # ist die Ursache also transient oder im Log nachvollziehbar.
+            if attempt < 3:
+                time.sleep(1.5 * (attempt + 1))
         if (
             "data" not in json_response
             or "user" not in json_response["data"]
@@ -416,6 +428,10 @@ class Twitch(object):
             self.__chuncked_sleep(random_sleep * 60, chunk_size=chunk_size)
 
     def post_gql_request(self, json_data):
+        # Für bereits als tot bekannte Persisted-Query-Hashes direkt den
+        # Volltext senden — spart den garantiert scheiternden Hash-Request und
+        # das auffällige "toter-Hash → Volltext"-Doppelmuster pro Aufruf.
+        json_data = self.__inject_full_queries(json_data)
         try:
             response = self.session.post(
                 GQLOperations.url,
@@ -445,6 +461,24 @@ class Twitch(object):
             logger.error(f"Error with GQLOperations ({operation}): {e}")
             return {}
 
+    def __inject_full_queries(self, json_data):
+        # Ersetzt den persistierten Hash durch den Volltext, sobald die
+        # Operation als tot memoisiert ist (siehe _dead_persisted_ops).
+        if isinstance(json_data, list):
+            return [self.__inject_full_queries(req) for req in json_data]
+        if not isinstance(json_data, dict):
+            return json_data
+        operation = json_data.get("operationName")
+        if (
+            operation in Twitch._dead_persisted_ops
+            and operation in GQL_FULL_QUERIES
+            and "query" not in json_data
+        ):
+            json_data = dict(json_data)
+            json_data["query"] = GQL_FULL_QUERIES[operation]
+            json_data.pop("extensions", None)
+        return json_data
+
     def __handle_gql_response(self, json_data, result):
         # Batch-Requests (Liste) elementweise behandeln, Form bleibt erhalten.
         if isinstance(json_data, list):
@@ -453,16 +487,22 @@ class Twitch(object):
                     self.__handle_gql_response(req, res)
                     for req, res in zip(json_data, result)
                 ]
-            return result
+            # Keine gleich lange Liste (z.B. 401/400-Fehler-dict): niemals eine
+            # rohe Fehlerantwort an Batch-Aufrufer durchreichen — Form wahren.
+            return [{} for _ in json_data]
         if not isinstance(result, dict):
             return {}
-        if "data" in result:
+        # "data": null tritt bei GQL-Fehlern auf Non-Nullable-Feldern auf und
+        # ist genauso unbrauchbar wie ein fehlender data-Key — beides fällt in
+        # den Fehlerzweig, damit Aufrufer nicht an response["data"][...] sterben.
+        if result.get("data") is not None:
             return result
 
-        # Kein "data": GQL-Fehlerantwort. Twitchs APQ-Cache verwirft alte
-        # Persisted-Query-Hashes; der echte Client sendet dann den vollen
-        # Query-Text nach — das tun wir hier auch, genau einmal (der Retry
-        # trägt "query" und landet nie wieder in diesem Zweig).
+        # Kein nutzbares "data": GQL-Fehlerantwort. Twitchs APQ-Cache verwirft
+        # alte Persisted-Query-Hashes; der echte Client sendet dann den vollen
+        # Query-Text nach — das tun wir auch. Die Operation wird prozessweit als
+        # tot gemerkt, sodass Folge-Requests direkt den Volltext tragen (der
+        # Retry selbst trägt "query" und landet nie wieder in diesem Zweig).
         errors = result.get("errors") or []
         messages = {
             e.get("message") for e in errors if isinstance(e, dict)
@@ -473,10 +513,12 @@ class Twitch(object):
             and "query" not in json_data
             and operation in GQL_FULL_QUERIES
         ):
-            logger.warning(
-                f"Persisted query hash for {operation} was rejected by Twitch, "
-                "retrying with the full query text."
-            )
+            if operation not in Twitch._dead_persisted_ops:
+                Twitch._dead_persisted_ops.add(operation)
+                logger.warning(
+                    f"Persisted query hash for {operation} was rejected by "
+                    "Twitch; using the full query text for the rest of this run."
+                )
             retry = {
                 "operationName": operation,
                 "variables": json_data.get("variables", {}),
@@ -726,8 +768,9 @@ class Twitch(object):
                                 f"Sent PlaybackAccessToken request for {streamers[index]}")
 
                             if 'data' not in responsePlaybackAccessToken:
-                                logger.error(
-                                    f"Invalid response from Twitch: {responsePlaybackAccessToken}")
+                                # post_gql_request hat die Fehlerantwort bereits
+                                # zentral geloggt (mit Operation + Payload) und
+                                # {} geliefert — hier nur überspringen.
                                 continue
 
                             streamPlaybackAccessToken = responsePlaybackAccessToken["data"].get(
@@ -1221,8 +1264,14 @@ class Twitch(object):
                         # yes! The streamer[index] have the drops_tags enabled and we It's currently stream a game with campaign active!
                         streamers[i].stream.campaigns = list(
                             filter(
+                                # Nur über die game-id vergleichen, nicht das
+                                # ganze game-Dict: die beiden Quell-Queries
+                                # (Overlay vs. DropCampaignDetails) liefern
+                                # unterschiedliche game-Felder, ein Dict-Vergleich
+                                # wäre nie True.
                                 lambda x: x.drops != []
-                                and x.game == streamers[i].stream.game
+                                and x.game.get("id")
+                                == streamers[i].stream.game_id()
                                 and x.id in streamers[i].stream.campaigns_ids,
                                 campaigns,
                             )

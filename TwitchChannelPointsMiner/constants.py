@@ -277,35 +277,26 @@ class GQLOperations:
 # der Webclient eine Operation nicht mehr in exakt diesem Wortlaut sendet
 # ("PersistedQueryNotFound", Rotation zuletzt 2026-07-14). Der echte Client
 # schickt dann transparent den vollen Query-Text nach — post_gql_request macht
-# über diese Tabelle dasselbe. Die Feldauswahl deckt genau ab, was der Miner
-# aus den Antworten liest (gegen gql.twitch.tv validiert).
+# über diese Tabelle dasselbe und merkt sich die tote Operation prozessweit
+# (danach direkt Volltext, kein Doppel-Request mehr).
+#
+# Abgedeckt sind ALLE tatsächlich genutzten Operationen (PersonalSections ist
+# ungenutzt und daher ausgelassen), damit die nächste Rotation nicht nur
+# crash-safe, sondern funktional aufgefangen wird. Jede Feldauswahl deckt genau
+# ab, was die Aufrufer aus der Antwort lesen; jede Query wurde gegen
+# gql.twitch.tv auf Schema-Gültigkeit geprüft. WICHTIG bei Änderungen:
+# `channelLogin` in DropCampaignDetails/-Callern ist die numerische User-ID,
+# daher `user(id:)` mit `ID!` — nicht `user(login:)`.
 GQL_FULL_QUERIES = {
-    "ChannelPointsContext": (
-        "query ChannelPointsContext($channelLogin: String!) { "
-        "community: user(login: $channelLogin) { id channel { id "
-        "self { communityPoints { balance availableClaim { id } "
-        "activeMultipliers { factor } } } "
-        "communityPointsSettings { goals { id title isInStock pointsContributed "
-        "amountNeeded perStreamUserMaximumContribution status } } } } }"
+    "WithIsStreamLiveQuery": (
+        "query WithIsStreamLiveQuery($id: ID!) { "
+        "user(id: $id) { id stream { id } } }"
     ),
-    "ModViewChannelQuery": (
-        "query ModViewChannelQuery($channelLogin: String!) { "
-        "user(login: $channelLogin) { id self { isModerator } } }"
-    ),
-    "CommunityMomentCallout_Claim": (
-        "mutation CommunityMomentCallout_Claim($input: ClaimCommunityMomentInput!) { "
-        "claimCommunityMoment(input: $input) { moment { id } error } }"
-    ),
-    "DropsHighlightService_AvailableDrops": (
-        "query DropsHighlightService_AvailableDrops($channelID: ID!) { "
-        "channel(id: $channelID) { id viewerDropCampaigns { id } } }"
-    ),
-    "DropCampaignDetails": (
-        "query DropCampaignDetails($dropID: ID!, $channelLogin: String!) { "
-        "user(login: $channelLogin) { id dropCampaign(id: $dropID) { id name status "
-        "startAt endAt game { id displayName } allow { channels { id } } "
-        "timeBasedDrops { id name startAt endAt requiredMinutesWatched "
-        "benefitEdges { benefit { id name } } } } } }"
+    "VideoPlayerStreamInfoOverlayChannel": (
+        "query VideoPlayerStreamInfoOverlayChannel($channel: String!) { "
+        "user(login: $channel) { id "
+        "broadcastSettings { id title game { id name displayName } } "
+        "stream { id viewersCount tags { id localizedName } } } }"
     ),
     "PlaybackAccessToken": (
         "query PlaybackAccessToken($login: String!, $isLive: Boolean!, "
@@ -316,5 +307,77 @@ GQL_FULL_QUERIES = {
         'videoPlaybackAccessToken(id: $vodID, params: {platform: "web", '
         'playerBackend: "mediaplayer", playerType: $playerType}) '
         "@include(if: $isVod) { value signature } }"
+    ),
+    "ChannelPointsContext": (
+        "query ChannelPointsContext($channelLogin: String!) { "
+        "community: user(login: $channelLogin) { id channel { id "
+        "self { communityPoints { balance availableClaim { id } "
+        "activeMultipliers { factor reasonCode } } } "
+        "communityPointsSettings { goals { id title isInStock pointsContributed "
+        "amountNeeded perStreamUserMaximumContribution status } } } } }"
+    ),
+    "ClaimCommunityPoints": (
+        "mutation ClaimCommunityPoints($input: ClaimCommunityPointsInput!) { "
+        "claimCommunityPoints(input: $input) { error { code } } }"
+    ),
+    "CommunityMomentCallout_Claim": (
+        "mutation CommunityMomentCallout_Claim($input: ClaimCommunityMomentInput!) { "
+        "claimCommunityMoment(input: $input) { moment { id } error } }"
+    ),
+    "DropsPage_ClaimDropRewards": (
+        "mutation DropsPage_ClaimDropRewards($input: ClaimDropRewardsInput!) { "
+        "claimDropRewards(input: $input) { status } }"
+    ),
+    "JoinRaid": (
+        "mutation JoinRaid($input: JoinRaidInput!) { "
+        "joinRaid(input: $input) { raidID } }"
+    ),
+    "ModViewChannelQuery": (
+        "query ModViewChannelQuery($channelLogin: String!) { "
+        "user(login: $channelLogin) { id self { isModerator } } }"
+    ),
+    "Inventory": (
+        "query Inventory { currentUser { id inventory { "
+        "dropCampaignsInProgress { id timeBasedDrops { id name "
+        "benefitEdges { benefit { id name } } requiredMinutesWatched startAt endAt "
+        "self { hasPreconditionsMet currentMinutesWatched dropInstanceID isClaimed } "
+        "} } } } }"
+    ),
+    "MakePrediction": (
+        "mutation MakePrediction($input: MakePredictionInput!) { "
+        "makePrediction(input: $input) { prediction { id } error { code } } }"
+    ),
+    "ViewerDropsDashboard": (
+        "query ViewerDropsDashboard { "
+        "currentUser { id dropCampaigns { id name status } } }"
+    ),
+    "DropCampaignDetails": (
+        "query DropCampaignDetails($dropID: ID!, $channelLogin: ID!) { "
+        "user(id: $channelLogin) { id dropCampaign(id: $dropID) { id name status "
+        "startAt endAt game { id name displayName } allow { channels { id } } "
+        "timeBasedDrops { id name startAt endAt requiredMinutesWatched "
+        "benefitEdges { benefit { id name } } } } } }"
+    ),
+    "DropsHighlightService_AvailableDrops": (
+        "query DropsHighlightService_AvailableDrops($channelID: ID!) { "
+        "channel(id: $channelID) { id viewerDropCampaigns { id } } }"
+    ),
+    "GetIDFromLogin": (
+        "query GetIDFromLogin($login: String!) { user(login: $login) { id } }"
+    ),
+    "ChannelFollows": (
+        "query ChannelFollows($limit: Int, $order: SortOrder, $cursor: Cursor) { "
+        "user { id follows(first: $limit, order: $order, after: $cursor) { "
+        "edges { cursor node { id login } } pageInfo { hasNextPage } } } }"
+    ),
+    "UserPointsContribution": (
+        "query UserPointsContribution($channelLogin: String!) { "
+        "user(login: $channelLogin) { id channel { id self { communityPoints { "
+        "goalContributions { goal { id } userPointsContributedThisStream } } } } } }"
+    ),
+    "ContributeCommunityPointsCommunityGoal": (
+        "mutation ContributeCommunityPointsCommunityGoal("
+        "$input: ContributeCommunityPointsCommunityGoalInput!) { "
+        "contributeCommunityPointsCommunityGoal(input: $input) { error { code } } }"
     ),
 }
