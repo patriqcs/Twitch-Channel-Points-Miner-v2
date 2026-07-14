@@ -71,6 +71,11 @@ class Account(SQLModel, table=True):
     device_id: Optional[str] = Field(default_factory=new_device_id)
     ua_app: Optional[str] = Field(default_factory=new_app_user_agent)
     ua_web: Optional[str] = Field(default_factory=new_web_user_agent)
+    # Per-Account-Client-Override (Default null -> globale TV-Client-Id). Gesetzt für
+    # einen Account, dessen OAuth-Token für einen ANDEREN Client ausgestellt ist
+    # (z.B. Android-App), damit Token/Client-Id/UA/Version kohärent bleiben.
+    client_id: Optional[str] = None
+    client_version: Optional[str] = None
     created_at: datetime = Field(default_factory=utcnow)
     last_login_at: Optional[datetime] = None
     # Optional signup email, recorded via the "Account anlegen" tab purely for

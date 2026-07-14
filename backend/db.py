@@ -56,6 +56,9 @@ def _ensure_columns() -> None:
             "ua_app": "VARCHAR",
             "ua_web": "VARCHAR",
             "signup_email": "VARCHAR",
+            # Per-account client override (null -> global TV client id).
+            "client_id": "VARCHAR",
+            "client_version": "VARCHAR",
         },
         # existing website users predate self-registration -> keep them approved
         "webuser": {

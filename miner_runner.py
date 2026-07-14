@@ -373,6 +373,11 @@ def main():
     device_id = cfg.get("device_id")
     ua_app = cfg.get("ua_app")
     ua_web = cfg.get("ua_web")
+    # Per-Account-Client-Override (Default null -> globale TV-Client-Id). Für einen
+    # Account, dessen Token für einen anderen Client ausgestellt ist (z.B. Android-App),
+    # damit Token/Client-Id/UA kohärent bleiben (kein Fingerprint-Mismatch).
+    client_id = cfg.get("client_id")
+    client_version = cfg.get("client_version")
     # H5 (Anti-Korrelation): ~13 Accounts mit BYTE-identischem Feature-Set (alle
     # follow_raid+claim_drops+claim_moments+watch_streak+chat=ONLINE) sind ein
     # Botnetz-Muster. Wir variieren pro Account NUR unkritische Flags (claim_moments,
@@ -409,6 +414,8 @@ def main():
         user_agent=ua_app,
         web_user_agent=ua_web,
         device_id=device_id,
+        client_id=client_id,
+        client_version=client_version,
         claim_drops_startup=True,
         priority=[Priority.STREAK, Priority.DROPS, Priority.ORDER],
         enable_analytics=False,

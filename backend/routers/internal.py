@@ -80,6 +80,9 @@ def get_config(username: str, session: Session = Depends(get_session)):
         "device_id": acc.device_id,
         "ua_app": acc.ua_app,
         "ua_web": acc.ua_web,
+        # Per-Account-Client-Override (null -> globale TV-Client-Id im Miner).
+        "client_id": acc.client_id,
+        "client_version": acc.client_version,
         "account_age_days": age_days,
         # True für den echten Hauptaccount (cover-excluded): der Miner lässt dann
         # die Feature-Flags auf sauberem Default und variiert sie NICHT.

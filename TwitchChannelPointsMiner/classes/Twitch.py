@@ -91,6 +91,9 @@ class Twitch(object):
         # "integrity_expire",
         "client_session",
         "client_version",
+        # Per-Account-Client-Override (Default: globale TV-Client-Id)
+        "client_id",
+        "_fixed_client_version",
         # M1: gecachte Client-Version (kein Homepage-GET pro GQL-Call)
         "_client_version_checked",
         "_client_version_ttl",
@@ -108,7 +111,15 @@ class Twitch(object):
     ]
 
     def __init__(self, username, user_agent, password=None, proxy=None,
-                 web_user_agent=None, device_id=None):
+                 web_user_agent=None, device_id=None,
+                 client_id=None, client_version=None):
+        # Per-Account-Client: Default = globale TV-Client-Id (constants.CLIENT_ID)
+        # mit live-gescrapter Web-Twilight-Version. Ein Account mit einem Token,
+        # der für einen ANDEREN Client ausgestellt ist (z.B. Android-App), setzt
+        # client_id + feste client_version, damit Token/Client-Id/UA kohärent sind
+        # (kein Mismatch). Wird von miner_runner via /internal/config durchgereicht.
+        self.client_id = client_id or CLIENT_ID
+        self._fixed_client_version = bool(client_version)
         # Honor COOKIES_DIR so the engine loads/saves cookies in the same place
         # the backend does (default: cwd/cookies == DATA_DIR/cookies).
         cookies_path = os.environ.get("COOKIES_DIR") or os.path.join(
@@ -151,7 +162,7 @@ class Twitch(object):
             choice(string.ascii_letters + string.digits) for _ in range(32)
         )
         self.twitch_login = TwitchLogin(
-            CLIENT_ID, self.device_id, username, self.user_agent,
+            self.client_id, self.device_id, username, self.user_agent,
             password=password, proxy=proxy,
         )
         self.running = True
@@ -161,7 +172,9 @@ class Twitch(object):
         # self.integrity = None
         # self.integrity_expire = 0
         self.client_session = token_hex(16)
-        self.client_version = CLIENT_VERSION
+        # Feste (per-Account) Version, falls übergeben — sonst der Default, der
+        # unten via get_client_version() live gescrapt/gecacht wird.
+        self.client_version = client_version or CLIENT_VERSION
         # Client-Version wird gecacht statt vor JEDEM GQL-Call frisch von der
         # www.twitch.tv-Homepage gescrapt zu werden — ein Homepage-GET vor jedem
         # API-Call passt zu keinem echten Client (TV-App lädt keine Web-Homepage)
@@ -409,7 +422,7 @@ class Twitch(object):
                 headers={
                     "Accept-Language": self.accept_language,
                     "Authorization": f"OAuth {self.twitch_login.get_auth_token()}",
-                    "Client-Id": CLIENT_ID,
+                    "Client-Id": self.client_id,
                     # "Client-Integrity": self.post_integrity(),
                     "Client-Session-Id": self.client_session,
                     "Client-Version": self.get_client_version(),
@@ -486,7 +499,11 @@ class Twitch(object):
 
     def get_client_version(self):
         """Cached Client-Version: refresht höchstens alle _client_version_ttl s,
-        statt vor jedem GQL-Call einen www.twitch.tv-Homepage-GET zu machen."""
+        statt vor jedem GQL-Call einen www.twitch.tv-Homepage-GET zu machen.
+        Bei per-Account fest gesetzter Version (Nicht-TV-Client) wird NICHT
+        gescrapt — der Web-Twilight-Build passt dann nicht zum Client."""
+        if self._fixed_client_version:
+            return self.client_version
         now = time.time()
         if now - self._client_version_checked >= self._client_version_ttl:
             self._client_version_checked = now

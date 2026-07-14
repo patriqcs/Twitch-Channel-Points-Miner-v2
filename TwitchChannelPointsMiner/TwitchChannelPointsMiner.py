@@ -90,6 +90,10 @@ class TwitchChannelPointsMiner:
         user_agent: str = None,
         web_user_agent: str = None,
         device_id: str = None,
+        # Per-Account-Client-Override (Default: globale TV-Client-Id). Für einen
+        # Account mit Token eines anderen Clients (z.B. Android-App) gesetzt.
+        client_id: str = None,
+        client_version: str = None,
         # Settings for logging and selenium as you can see.
         priority: list = [Priority.STREAK, Priority.DROPS, Priority.ORDER],
         # This settings will be global shared trought Settings class
@@ -160,6 +164,7 @@ class TwitchChannelPointsMiner:
         self.twitch = Twitch(
             self.username, user_agent, password, proxy=proxy,
             web_user_agent=web_user_agent, device_id=device_id,
+            client_id=client_id, client_version=client_version,
         )
 
         self.claim_drops_startup = claim_drops_startup
