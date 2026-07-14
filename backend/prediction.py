@@ -46,6 +46,13 @@ SPACING_MAX_KEY = "PREDICTION_SPACING_MAX"
 # (nicht immer 100% All-in -> weniger auffälliges „alle volle Kanne"-Muster).
 BET_PCT_MIN_KEY = "PREDICTION_BET_PCT_MIN"
 BET_PCT_MAX_KEY = "PREDICTION_BET_PCT_MAX"
+# Anti-Detection gegen das Korrelations-Signal „alle Accounts setzen auf DIESELBE
+# Seite": Teilnahmequote < 100% (pro Runde zufällig einige auslassen) und eine
+# optionale Gegen-Quote (ein Teil setzt bei 2-Outcome-Wetten aufs andere Ergebnis).
+# PARTICIPATION_PCT: nur Opportunitätskosten (ausgelassene Accounts behalten Punkte).
+# COUNTER_PCT: kostet Punkte (Gegenwette verliert i.d.R.) -> Default 0 = aus, opt-in.
+PARTICIPATION_PCT_KEY = "PREDICTION_PARTICIPATION_PCT"
+COUNTER_PCT_KEY = "PREDICTION_COUNTER_PCT"
 
 # Der Haupt-Account wettet nie mit (kommasepariert erweiterbar im UI).
 DEFAULT_EXCLUDE = "patriqcs"
@@ -57,21 +64,12 @@ DEFAULT_EXCLUDE = "patriqcs"
 # Accounts abweichen (sonst python-requests-UA + Web-Client-Id ohne Geräte-Id),
 # präsentieren wir den Token genauso. Live verifiziert: TV-Signatur wird für
 # ChannelPointsContext, ActivePredictionEvents und MakePrediction akzeptiert.
-TV_CLIENT_ID = "ue6666qo983tsx6so1t0vnawi233wa"
-CLIENT_VERSION = "ef928475-9403-42f2-8a34-55784bd08e16"
-# Wie der Miner: eine zufällige Session-Id pro Prozess (nicht pro Request).
-_CLIENT_SESSION_ID = token_hex(16)
-
-
 def fp_headers(device_id: "str | None", user_agent: "str | None") -> dict:
-    """TV-Signatur-Header für einen Account (Client-Id/UA/X-Device-Id ...)."""
-    h = {"Client-Id": TV_CLIENT_ID, "Client-Version": CLIENT_VERSION,
-         "Client-Session-Id": _CLIENT_SESSION_ID}
-    if user_agent:
-        h["User-Agent"] = user_agent
-    if device_id:
-        h["X-Device-Id"] = device_id
-    return h
+    """TV-Signatur-Header für einen Account. Delegiert an redeem.fp_headers, damit
+    das gesamte Backend EINE Client-Session-Id und dieselbe live-gecachte
+    Client-Version nutzt (statt je Modul eigene Konstanten — das ergab pro Account
+    mehrere Session-Ids und eine stale Version)."""
+    return redeem.fp_headers(device_id=device_id, user_agent=user_agent)
 
 # Twitch-Limits pro Wette und Account
 MIN_BET = 10
@@ -109,10 +107,16 @@ def get_config(session: Session) -> dict:
         "exclude": _get_setting(session, EXCLUDE_KEY, DEFAULT_EXCLUDE) or "",
         # Default-Fenster bewusst breiter als früher (war 1–4s): weniger
         # zeitlich geballtes „alle gleichzeitig"-Signal.
-        "spacing_min": _num(SPACING_MIN_KEY, 3.0),
-        "spacing_max": _num(SPACING_MAX_KEY, 15.0),
+        "spacing_min": _num(SPACING_MIN_KEY, 5.0),
+        "spacing_max": _num(SPACING_MAX_KEY, 40.0),
         "bet_pct_min": _pct(BET_PCT_MIN_KEY, 70.0),
         "bet_pct_max": _pct(BET_PCT_MAX_KEY, 100.0),
+        # Teilnahmequote: Default 85% -> pro Runde ~15% zufällig ausgelassen, damit
+        # nicht IMMER alle Accounts wetten (bricht das „vollständige Fleet"-Muster).
+        "participation_pct": _pct(PARTICIPATION_PCT_KEY, 85.0),
+        # Gegen-Quote: Default 0% (aus). >0 nur bei 2-Outcome-Wetten wirksam; kostet
+        # bewusst Punkte -> nur einschalten, wenn Tarnung > Ertrag gewichtet wird.
+        "counter_pct": max(0.0, min(100.0, _num(COUNTER_PCT_KEY, 0.0))),
     }
 
 
@@ -246,10 +250,13 @@ TOS_BLOCKED_CODE = "MUST_ACCEPT_TOS"
 
 def _post_gql(token, proxies, body, timeout=15, extra_headers=None):
     """Wie redeem._gql, aber mit fertigem Request-Body (für persistedQuery)."""
+    # Fail-safe TV-Default (statt Web-Client-Id) + Accept-Language, konsistent zu
+    # redeem._gql; extra_headers (account_fp) überschreibt mit der Account-Signatur.
     headers = {
         "Content-Type": "application/json",
-        "Client-Id": redeem.TWITCH_WEB_CLIENT_ID,
+        "Accept-Language": redeem._ACCEPT_LANGUAGE,
         "Authorization": f"OAuth {token}",
+        **redeem.fp_headers(),
     }
     if extra_headers:
         headers.update(extra_headers)
@@ -440,12 +447,16 @@ def _log_event(account_id: int, channel: str, points: "int | None",
 
 def start_run(channel: str, event: dict, outcome_id: str, candidates: list,
               spacing_min: float, spacing_max: float,
-              bet_pct_min: float = 100.0, bet_pct_max: float = 100.0) -> str:
+              bet_pct_min: float = 100.0, bet_pct_max: float = 100.0,
+              participation_pct: float = 100.0, counter_pct: float = 0.0) -> str:
     """Startet die Wett-Runde im Hintergrund. Raises RuntimeError wenn belegt.
 
     Pro Account wird ein zufälliger Prozentsatz (bet_pct_min..max) des Guthabens
     gesetzt und der zeitliche Abstand (spacing_min..max) zwischen Accounts
-    randomisiert — beides gegen ein auffällig gleichförmiges Bot-Muster.
+    randomisiert. Zusätzlich (Anti-Korrelation): pro Runde wird nur ein zufälliger
+    Anteil (participation_pct) der Accounts überhaupt gesetzt, und ein Anteil
+    (counter_pct, nur bei genau 2 Outcomes) setzt aufs Gegen-Ergebnis — damit die
+    Flotte nicht monolithisch auf EINER Seite mit voller Teilnahme steht.
     """
     outcome = next((o for o in event["outcomes"] if o["id"] == outcome_id), None)
     if outcome is None:
@@ -454,6 +465,37 @@ def start_run(channel: str, event: dict, outcome_id: str, candidates: list,
     if not candidates:
         raise ValueError("no usable account login")
     random.shuffle(candidates)
+
+    n = len(candidates)
+    # Teilnahmequote: mind. 1 Account, sonst würde eine Runde ins Leere laufen.
+    keep = max(1, min(n, round(n * max(1.0, participation_pct) / 100.0)))
+    # Gegen-Outcome nur bei genau 2 Ergebnissen; nie ALLE Teilnehmer umdrehen.
+    other = None
+    outcomes = event.get("outcomes", [])
+    if counter_pct > 0 and len(outcomes) == 2:
+        other = next((o for o in outcomes if o["id"] != outcome_id), None)
+    n_counter = 0
+    if other is not None and keep > 1:
+        n_counter = min(keep - 1, round(keep * counter_pct / 100.0))
+
+    results = []
+    for idx, c in enumerate(candidates):
+        participate = idx < keep
+        if participate and (keep - 1 - idx) < n_counter:
+            # die letzten n_counter der Teilnehmer setzen aufs Gegen-Outcome
+            tgt_id, tgt_title = other["id"], other["title"]
+        else:
+            tgt_id, tgt_title = outcome_id, outcome["title"]
+        c["_participate"] = participate
+        c["_outcome_id"] = tgt_id
+        c["_outcome_title"] = tgt_title
+        results.append({
+            "account_id": c["id"], "username": c["username"],
+            "status": "waiting" if participate else "skipped",
+            "balance": None, "points": None,
+            "message": "" if participate else "ausgelassen (Streuung)",
+            "code": None,
+        })
 
     run = {
         "run_id": uuid.uuid4().hex[:12],
@@ -466,11 +508,7 @@ def start_run(channel: str, event: dict, outcome_id: str, candidates: list,
         "started_at": time.time(),
         "done": False,
         "cancelled": False,
-        "results": [{
-            "account_id": c["id"], "username": c["username"],
-            "status": "waiting", "balance": None, "points": None,
-            "message": "", "code": None,
-        } for c in candidates],
+        "results": results,
         "_candidates": candidates,
         "_spacing": (min(spacing_min, spacing_max), max(spacing_min, spacing_max)),
         "_bet_pct": (min(bet_pct_min, bet_pct_max), max(bet_pct_min, bet_pct_max)),
@@ -483,10 +521,10 @@ def start_run(channel: str, event: dict, outcome_id: str, candidates: list,
         _run = run
     threading.Thread(target=_worker, args=(run,), daemon=True,
                      name="prediction-run").start()
-    logger.info('prediction run %s: %d account(s) on "%s" (%s, #%s), '
-                'einsatz %.0f-%.0f%%, abstand %.0f-%.0fs',
-                run["run_id"], len(candidates), outcome["title"],
-                event["title"], channel, *run["_bet_pct"], *run["_spacing"])
+    logger.info('prediction run %s: %d/%d account(s) on "%s" (%s, #%s), '
+                '%d gegen, einsatz %.0f-%.0f%%, abstand %.0f-%.0fs',
+                run["run_id"], keep, n, outcome["title"],
+                event["title"], channel, n_counter, *run["_bet_pct"], *run["_spacing"])
     return run["run_id"]
 
 
@@ -501,6 +539,10 @@ def _worker(run: dict) -> None:
         def _set(**kw):
             with _run_lock:
                 res.update(**kw)
+
+        # Per-Runde-Streuung: dieser Account wurde zufällig ausgelassen.
+        if not cand.get("_participate", True):
+            continue
 
         if _cancel.is_set():
             _set(status="skipped", message="abgebrochen")
@@ -533,18 +575,20 @@ def _worker(run: dict) -> None:
                  message=f"unter Minimum ({MIN_BET} Punkte)")
             continue
 
+        tgt_id = cand.get("_outcome_id", run["outcome_id"])
+        tgt_title = cand.get("_outcome_title", run["outcome_title"])
         r = make_prediction(cand["token"], cand["proxies"], run["event_id"],
-                            run["outcome_id"], amount,
+                            tgt_id, amount,
                             device_id=cand.get("device_id"),
                             user_agent=cand.get("ua_app"))
         if r["ok"]:
             _set(status="ok", balance=balance, points=amount,
                  message=f"{amount:,} Punkte gesetzt".replace(",", "."))
             _log_event(cand["id"], run["channel"], amount,
-                       f'Wette: {amount} Punkte auf "{run["outcome_title"]}" '
+                       f'Wette: {amount} Punkte auf "{tgt_title}" '
                        f'({run["event_title"]})')
             logger.info("prediction: %s bet %d on \"%s\"", cand["username"],
-                        amount, run["outcome_title"])
+                        amount, tgt_title)
         else:
             code = r.get("code")
             # AGB-Sperre ist kein „Fehlschlag" durch Wiederholen lösbar, sondern

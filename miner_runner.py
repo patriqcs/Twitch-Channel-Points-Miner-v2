@@ -11,6 +11,7 @@ Lifecycle:
 Username: ENV TWITCH_USERNAME or argv[1].
 Backend:  ENV BACKEND_URL + INTERNAL_TOKEN (injected by MinerManager).
 """
+import hashlib
 import json
 import logging
 import os
@@ -372,6 +373,16 @@ def main():
     device_id = cfg.get("device_id")
     ua_app = cfg.get("ua_app")
     ua_web = cfg.get("ua_web")
+    # H5 (Anti-Korrelation): ~13 Accounts mit BYTE-identischem Feature-Set (alle
+    # follow_raid+claim_drops+claim_moments+watch_streak+chat=ONLINE) sind ein
+    # Botnetz-Muster. Wir variieren pro Account NUR unkritische Flags (claim_moments,
+    # chat-Präsenz) deterministisch — bonus-kritische Flags (Raid/Drops/Watch-Streak)
+    # bleiben IMMER an, damit garantierte Boni nicht leiden. Der echte Hauptaccount
+    # (clean) bleibt komplett auf sauberem Default.
+    _clean = bool(cfg.get("clean"))
+    _h = int(hashlib.md5(f"feat:{username}".encode()).hexdigest(), 16)
+    var_claim_moments = True if _clean else bool(_h & 1)
+    var_chat = ChatPresence.ONLINE if (_clean or (_h >> 1) & 1) else ChatPresence.NEVER
     # Expose account age to the engine (behavioural warm-up for new accounts).
     # The engine reads MINER_ACCOUNT_AGE_DAYS via env in its jitter/bet helpers.
     age_days = cfg.get("account_age_days")
@@ -416,12 +427,12 @@ def main():
         ),
         streamer_settings=StreamerSettings(
             make_predictions=False,   # never bet
-            follow_raid=True,
-            claim_drops=True,
-            claim_moments=True,
-            watch_streak=True,
+            follow_raid=True,         # garantierter Bonus -> immer an
+            claim_drops=True,         # Wert -> immer an
+            claim_moments=var_claim_moments,  # H5: pro Account variiert
+            watch_streak=True,        # garantierter Bonus -> immer an
             community_goals=False,
-            chat=ChatPresence.ONLINE,
+            chat=var_chat,            # H5: pro Account ONLINE/NEVER (auf TLS)
         ),
     )
 

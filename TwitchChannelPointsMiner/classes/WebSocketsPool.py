@@ -217,9 +217,14 @@ class WebSocketsPool:
                 # to 0 in on_open() once a connection actually opens.
                 n = self.reconnect_attempts.get(ws.index, 0)
                 self.reconnect_attempts[ws.index] = n + 1
-                delay = min(2 ** n, 60)  # 1, 2, 4, 8, 16, 32, 60, 60, ...
+                # ±40% Zufalls-Offset: alle Accounts teilen den Mullvad-Tunnel;
+                # fällt die Strecke gemeinsam aus, laufen ohne Jitter alle exakt
+                # dieselbe 1,2,4,8…-Progression und reconnecten fleet-synchron
+                # (~13 PubSub-Reconnects vom selben IP-Bereich in Sekunden = ein
+                # Koordinationssignal). Der Jitter entzerrt die Rückkehr.
+                delay = min(2 ** n, 60) * random.uniform(0.7, 1.4)
                 logger.info(
-                    f"#{ws.index} - Reconnecting to Twitch PubSub server in ~{delay}s"
+                    f"#{ws.index} - Reconnecting to Twitch PubSub server in ~{delay:.0f}s"
                 )
                 time.sleep(delay)
 
@@ -539,6 +544,17 @@ class WebSocketsPool:
                 # Inform the user about the potential outdated cookie file
                 username = ws.twitch.twitch_login.username
                 logger.error(f"Received the ERR_BADAUTH error, most likely you have an outdated cookie file \"cookies\\{username}.pkl\". Delete this file and try again.")
+                # ERR_BADAUTH ist terminal: der Token ist tot. Die Verbindung wird
+                # jetzt hart geschlossen (forced_close ⇒ kein Reconnect), damit der
+                # Socket nicht bei jedem späteren Reconnect denselben toten Token
+                # erneut ge-LISTEN't — ein wiederkehrendes Auth-Failure-Muster war
+                # mit die Ursache der Ban-Welle. Das Backend fängt die obige
+                # Log-Meldung via BanSignalReporter ab (stop + needs_login).
+                ws.forced_close = True
+                try:
+                    ws.close()
+                except Exception:
+                    pass
                 # Attempt to delete the outdated cookie file
                 # try:
                 #     cookie_file_path = os.path.join("cookies", f"{username}.pkl")

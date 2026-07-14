@@ -15,10 +15,14 @@ Wichtig:
   * Farm-Streamer stehen in der Liste zuerst (Priority.ORDER) -> j4nkttv-Farming
     wird nicht beeinträchtigt; Tarn-Kanäle füllen nur den zweiten Watch-Slot bzw.
     diversifizieren Abos/Follows/Watch-Minuten.
-  * Die Auswahl ist deterministisch (md5 über account_id) -> stabil über
-    Neustarts (eine bei jedem Start wechselnde Kanalliste wäre selbst auffällig)
-    und je Account verschieden (bricht das „alle schauen dasselbe"-Cluster).
+  * Die Auswahl ist deterministisch (md5 über account_id + grobe Zeit-Epoche) ->
+    stabil über Neustarts (eine bei jedem Start wechselnde Kanalliste wäre selbst
+    auffällig) und je Account verschieden (bricht das „alle schauen dasselbe"-
+    Cluster). Die Epoche (~alle 3 Wochen) sorgt für langsame Drift, damit ein
+    Account nicht über Monate exakt dieselben Kanäle schaut (null Drift = perfekt
+    stabiler Verhaltens-Hash).
 """
+import datetime
 import hashlib
 
 from sqlmodel import Session
@@ -42,6 +46,10 @@ DEFAULT_COVER_EXCLUDE = "patriqcs"
 
 # Verifizierte, häufig live große deutsche Twitch-Kanäle (Login-Namen). Große
 # Kanäle = die zusätzlichen Watch-Minuten/Follows gehen in der Masse unter.
+# HINWEIS: Ein Tarn-Kanal muss ein REALER, großer, häufig live DE-Kanal sein —
+# sonst wird ein Follow auf einen kleinen/toten Kanal selbst zum Tell. Der Pool
+# ist per UI (COVER_STREAMERS) erweiterbar; hier nur verifizierte Defaults. Ein
+# größerer Pool senkt die Überlappung zwischen Accounts weiter (empfohlen: 40+).
 DEFAULT_COVER_POOL = [
     "montanablack88", "trymacs", "papaplatte", "eligella", "amar", "knossi",
     "gronkh", "staiy", "rewinside", "rumathra", "shlorox", "standartskill",
@@ -131,9 +139,16 @@ def cover_for_account(account_id: int, cfg: "dict | None" = None,
     count = cfg.get("count", DEFAULT_COVER_COUNT)
     if count <= 0 or not pool:
         return []
-    # Deterministische Rangfolge pro Account (stabil + je Account verschieden).
+    # Grobe Zeit-Epoche (~3 Wochen): stabil über Neustarts, wechselt aber langsam,
+    # damit die Kanal-Auswahl nicht über Monate invariant bleibt (Verhaltens-Hash).
+    epoch = datetime.date.today().toordinal() // 21
+    # Per-Account-Anzahl-Streuung (count ±1, geklammert), damit nicht alle exakt
+    # dieselbe Anzahl Tarn-Kanäle picken (glättet Überlappungs-Häufungen).
+    span = int(hashlib.md5(f"cnt:{account_id}:{epoch}".encode()).hexdigest(), 16) % 3
+    eff_count = max(1, min(len(pool), count - 1 + span))
+    # Deterministische Rangfolge pro Account+Epoche (stabil + je Account verschieden).
     ranked = sorted(
         pool,
-        key=lambda ch: hashlib.md5(f"{account_id}:{ch}".encode()).hexdigest(),
+        key=lambda ch: hashlib.md5(f"{account_id}:{epoch}:{ch}".encode()).hexdigest(),
     )
-    return ranked[:count]
+    return ranked[:eff_count]

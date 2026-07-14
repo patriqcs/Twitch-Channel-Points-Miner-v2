@@ -106,6 +106,10 @@ export default function Predictions() {
         exclude: cfg.exclude,
         spacing_min: cfg.spacing_min,
         spacing_max: cfg.spacing_max,
+        bet_pct_min: cfg.bet_pct_min,
+        bet_pct_max: cfg.bet_pct_max,
+        participation_pct: cfg.participation_pct,
+        counter_pct: cfg.counter_pct,
       });
       setCfg(saved);
       setMsg("✅ Einstellungen gespeichert");
@@ -407,11 +411,28 @@ export default function Predictions() {
                 onChange={(e) => setCfg({ ...cfg, bet_pct_max: Number(e.target.value) })}
               />
             </Field>
+            <Field label="Teilnahme (%)" hint="Anteil der Accounts, die pro Runde überhaupt setzen (Rest zufällig ausgelassen)">
+              <Input
+                type="number"
+                value={String(cfg.participation_pct)}
+                onChange={(e) => setCfg({ ...cfg, participation_pct: Number(e.target.value) })}
+              />
+            </Field>
+            <Field label="Gegen-Quote (%)" hint="Anteil, der aufs andere Ergebnis setzt (nur 2-Outcome-Wetten; kostet Punkte) — 0 = aus">
+              <Input
+                type="number"
+                value={String(cfg.counter_pct)}
+                onChange={(e) => setCfg({ ...cfg, counter_pct: Number(e.target.value) })}
+              />
+            </Field>
           </div>
           <div className="text-xs text-zinc-500">
             Anti-Detection: unterschiedliche Einsatz-Höhen (z.B. 70–100 %) und ein
             breiteres Zeitfenster lassen die Accounts weniger nach koordiniertem Bot
-            aussehen. 100/100 = echtes All-in.
+            aussehen. 100/100 = echtes All-in. Teilnahme &lt; 100 % lässt pro Runde
+            zufällig einige Accounts aus (nur Opportunitätskosten); die Gegen-Quote
+            setzt einen Teil bewusst aufs andere Ergebnis (kostet Punkte, bricht aber
+            das „alle auf eine Seite"-Muster).
           </div>
           <Button variant="outline" onClick={saveCfg}>
             Speichern

@@ -326,7 +326,11 @@ class StreamGateMonitor:
         candidates = self._offline_candidates()
         if not candidates or presence <= 0:
             return
-        target = set(random.sample(candidates, min(presence, len(candidates))))
+        # N4: die Anzahl gleichzeitig Präsenter pro Rotation leicht (±1) wackeln
+        # lassen, damit nicht IMMER exakt `presence` Accounts gleichzeitig online
+        # sind (eine feste Zahl ist selbst ein Muster). Untergrenze 1.
+        eff = max(1, presence + random.choice((-1, 0, 1)))
+        target = set(random.sample(candidates, min(eff, len(candidates))))
         running = set(self._running_usernames())
         # rotate OUT (stop those no longer selected)
         for u in running - target:
