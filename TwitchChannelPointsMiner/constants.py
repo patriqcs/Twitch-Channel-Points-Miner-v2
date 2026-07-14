@@ -3,7 +3,11 @@ URL = "https://www.twitch.tv"               # Browser, Apps
 # URL = "https://m.twitch.tv"               # Mobile Browser
 # URL = "https://android.tv.twitch.tv"      # TV
 IRC = "irc.chat.twitch.tv"
-IRC_PORT = 6667
+# TLS-Port (6697) statt Klartext-IRC (6667): eine echte Twitch-Chatsitzung ist
+# verschlüsselt; ein unverschlüsselter oauth:<TV-Token> über 6667 fällt sofort aus
+# dem normalen Traffic-Bild (Bot-Tell auf Transportebene). Twitch unterstützt
+# IRC-over-TLS offiziell. Der Socket wird in Chat.py per ssl.wrap_socket gehoben.
+IRC_PORT = 6697
 WEBSOCKET = "wss://pubsub-edge.twitch.tv/v1"
 CLIENT_ID = "ue6666qo983tsx6so1t0vnawi233wa"        # TV
 # CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"      # Browser

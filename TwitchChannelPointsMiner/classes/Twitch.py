@@ -5,6 +5,7 @@
 
 
 import copy
+import hashlib
 import logging
 import os
 import random
@@ -153,6 +154,33 @@ class Twitch(object):
         # self.integrity_expire = 0
         self.client_session = token_hex(16)
         self.client_version = CLIENT_VERSION
+        # Client-Version wird gecacht statt vor JEDEM GQL-Call frisch von der
+        # www.twitch.tv-Homepage gescrapt zu werden — ein Homepage-GET vor jedem
+        # API-Call passt zu keinem echten Client (TV-App lädt keine Web-Homepage)
+        # und verdoppelt den Traffic. Refresh höchstens alle CLIENT_VERSION_TTL s.
+        self._client_version_checked = 0.0
+        self._client_version_ttl = float(
+            os.environ.get("MINER_CLIENT_VERSION_TTL", str(6 * 3600))
+        )
+        # Geo-passendes Accept-Language (Proxys sind DE): echte Clients senden
+        # Accept-Language auf GQL; das Fehlen bzw. ein fixes en-US bei DE-Exit ist
+        # eine milde Geo-Inkohärenz.
+        self.accept_language = os.environ.get(
+            "MINER_ACCEPT_LANGUAGE", "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7"
+        )
+        # Per-Account persistente Watch-Kadenz: sonst senden ALLE Accounts die
+        # minute-watched-POSTs mit identischer Basis (20s) und identischem
+        # Jitter-Band (±15%) — über die Zeit gemittelt dasselbe Intervall-
+        # Histogramm bei allen (Kohorten-Tell). Basis + Jitter-Breite werden
+        # deterministisch aus der device_id abgeleitet (stabil, aber pro Account
+        # verschieden), env-übersteuerbar über eine Bandbreite.
+        _seed = int(hashlib.md5(f"watch:{self.device_id}".encode()).hexdigest(), 16)
+        _base_lo = float(os.environ.get("MINER_WATCH_BASE_MIN", "18"))
+        _base_hi = float(os.environ.get("MINER_WATCH_BASE_MAX", "26"))
+        _jit_lo = float(os.environ.get("MINER_WATCH_JITTER_MIN", "0.10"))
+        _jit_hi = float(os.environ.get("MINER_WATCH_JITTER_MAX", "0.20"))
+        self.watch_base = _base_lo + (_seed % 1000) / 1000.0 * (_base_hi - _base_lo)
+        self.watch_jitter = _jit_lo + ((_seed // 1000) % 1000) / 1000.0 * (_jit_hi - _jit_lo)
         self.twilight_build_id_pattern = re.compile(
             r'window\.__twilightBuildID\s*=\s*"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"'
         )
@@ -371,11 +399,12 @@ class Twitch(object):
                 GQLOperations.url,
                 json=json_data,
                 headers={
+                    "Accept-Language": self.accept_language,
                     "Authorization": f"OAuth {self.twitch_login.get_auth_token()}",
                     "Client-Id": CLIENT_ID,
                     # "Client-Integrity": self.post_integrity(),
                     "Client-Session-Id": self.client_session,
-                    "Client-Version": self.update_client_version(),
+                    "Client-Version": self.get_client_version(),
                     "User-Agent": self.user_agent,
                     "X-Device-Id": self.device_id,
                 },
@@ -446,6 +475,15 @@ class Twitch(object):
             return True
         else:
             return False"""
+
+    def get_client_version(self):
+        """Cached Client-Version: refresht höchstens alle _client_version_ttl s,
+        statt vor jedem GQL-Call einen www.twitch.tv-Homepage-GET zu machen."""
+        now = time.time()
+        if now - self._client_version_checked >= self._client_version_ttl:
+            self._client_version_checked = now
+            self.update_client_version()
+        return self.client_version
 
     def update_client_version(self):
         try:
@@ -582,11 +620,14 @@ class Twitch(object):
 
                 for index in streamers_watching:
                     # next_iteration = time.time() + 60 / len(streamers_watching)
-                    # Jitter the watch cadence ~±15% so the minute-watched POSTs
-                    # don't land on a perfectly fixed 20/N-second grid (a bot
-                    # tell), while staying close enough to keep the watch streak.
+                    # Per-Account-Basis (self.watch_base, ~18-26s) + per-Account
+                    # Jitter-Breite (self.watch_jitter) statt fleet-weit fixem
+                    # 20s/±15%. Jeder Account hat so eine eigene mittlere Kadenz
+                    # UND eigene Varianz → kein gemeinsames Intervall-Histogramm.
+                    # Basis bleibt deutlich unter 60s → Watch-Streak sicher.
                     next_iteration = time.time() + (
-                        random.uniform(0.85, 1.15) * 20 / len(streamers_watching)
+                        random.uniform(1.0 - self.watch_jitter, 1.0 + self.watch_jitter)
+                        * self.watch_base / len(streamers_watching)
                     )
 
                     try:

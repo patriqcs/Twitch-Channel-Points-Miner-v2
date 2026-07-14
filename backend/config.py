@@ -40,7 +40,11 @@ WEB_PORT = int(os.environ.get("WEB_PORT", os.environ.get("PORT", "8000")))
 BACKEND_URL = os.environ.get("BACKEND_URL", f"http://127.0.0.1:{WEB_PORT}")
 
 # Business rule: how many accounts may share one proxy (Phase 4 enforces it).
-MAX_ACCOUNTS_PER_PROXY = int(os.environ.get("MAX_ACCOUNTS_PER_PROXY", "5"))
+# Default 1: mehrere Farm-Accounts hinter EINER Exit-IP, die alle demselben
+# Streamer folgen, sind ein direkter Netzwerk-Korrelationsgraph. Bei ~13 Accounts
+# und genug Mullvad-Relays ist 1:1 problemlos; hochsetzen nur, wenn Relays knapp
+# sind (dann bewusst Korrelation gegen Uptime abwägen).
+MAX_ACCOUNTS_PER_PROXY = int(os.environ.get("MAX_ACCOUNTS_PER_PROXY", "1"))
 
 # CORS: the SPA is served same-origin in production, so cross-origin access is
 # only needed for the Vite dev server. Override with a comma-separated list (or
@@ -67,10 +71,17 @@ def _bool_env(name: str, default: bool) -> bool:
 # fails PROXY_FAIL_THRESHOLD checks in a row is treated as dead: the account is
 # moved to another working proxy, or (if none free and PROXY_ALLOW_DIRECT) kept
 # mining without a proxy as a last resort.
+#
+# PROXY_ALLOW_DIRECT Default False: der Container läuft im Split-Tunnel (nur die
+# Mullvad-Strecke geht durch wg0), ein Account OHNE Proxy routet also über die
+# echte Heim-/ISP-IP — genau die IP des echten Hauptaccounts. Ein Farm-Account,
+# der im Failover plötzlich von der Heim-IP auftaucht, verknüpft die Bot-Flotte
+# mit der echten Person. Politik für Farm-Accounts: lieber pausiert als geleakt.
+# patriqcs ist davon unberührt (no_proxy=True, wird vom Monitor übersprungen).
 PROXY_MONITOR_ENABLED = _bool_env("PROXY_MONITOR_ENABLED", True)
 PROXY_CHECK_INTERVAL = int(os.environ.get("PROXY_CHECK_INTERVAL", "120"))  # seconds
 PROXY_FAIL_THRESHOLD = int(os.environ.get("PROXY_FAIL_THRESHOLD", "2"))
-PROXY_ALLOW_DIRECT = _bool_env("PROXY_ALLOW_DIRECT", True)
+PROXY_ALLOW_DIRECT = _bool_env("PROXY_ALLOW_DIRECT", False)
 
 # ---- Auto-start on boot ----
 # On container start, (re)start the enabled accounts automatically — but wait

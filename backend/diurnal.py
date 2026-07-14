@@ -59,11 +59,23 @@ def get_config(session: Session) -> dict:
     return {"enabled": enabled, "sleep_hours": hours}
 
 
-def _sleep_start_hour(account_id: int) -> float:
-    """Stabiler Schlaf-Beginn (Stunde, Europe/Berlin) je Account: 23:00–01:59."""
+def _night_seed(local: datetime) -> int:
+    """Stabile Kennung der aktuellen Nacht: lokale Zeit minus 12 h, als Tages-
+    Ordinalzahl. So fällt ein ganzes Schlaf-Fenster (~23:00–06:00) in EINE
+    Kennung — der Tages-Jitter kippt nicht mitten in der Nacht um Mitternacht,
+    driftet aber von Nacht zu Nacht."""
+    return (local - timedelta(hours=12)).toordinal()
+
+
+def _sleep_start_hour(account_id: int, night: int) -> float:
+    """Schlaf-Beginn (Stunde, Europe/Berlin) je Account: Basis 23:00–01:59 plus
+    ±25 min Tages-Jitter, damit das Fenster nicht über Monate sekundengenau
+    reproduzierbar ist (null Drift = Verhaltens-Hash)."""
     h = int(hashlib.md5(f"sleep:{account_id}".encode()).hexdigest(), 16)
-    # 23 + [0..3) Stunden, plus Minuten-Versatz, dann mod 24
-    return (23 + (h % 3) + ((h >> 4) % 60) / 60.0) % 24.0
+    base = 23 + (h % 3) + ((h >> 4) % 60) / 60.0
+    j = int(hashlib.md5(f"sleepjit:{account_id}:{night}".encode()).hexdigest(), 16)
+    offset = ((j % 51) - 25) / 60.0  # -25 .. +25 min
+    return (base + offset) % 24.0
 
 
 def is_awake(account_id: int, cfg: dict, now: "datetime | None" = None) -> bool:
@@ -76,7 +88,11 @@ def is_awake(account_id: int, cfg: dict, now: "datetime | None" = None) -> bool:
     now = now or datetime.now(timezone.utc)
     local = now.astimezone(_BERLIN)
     cur = local.hour + local.minute / 60.0
-    start = _sleep_start_hour(account_id)
+    night = _night_seed(local)
+    start = _sleep_start_hour(account_id, night)
+    # Fensterlänge ±20 min Tages-Jitter (gleiche Nacht-Kennung → stabil in der Nacht).
+    hj = int(hashlib.md5(f"durjit:{account_id}:{night}".encode()).hexdigest(), 16)
+    hours = max(0.0, hours + ((hj % 41) - 20) / 60.0)  # ±20 min
     end = start + hours  # kann > 24 laufen (Wrap über Mitternacht)
     # Ist cur im [start, end) mod 24?
     if end <= 24.0:

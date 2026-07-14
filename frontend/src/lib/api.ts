@@ -173,6 +173,8 @@ export interface PredictionConfig {
   spacing_max: number;
   bet_pct_min: number;
   bet_pct_max: number;
+  participation_pct: number;
+  counter_pct: number;
 }
 
 export interface PredictionRun {

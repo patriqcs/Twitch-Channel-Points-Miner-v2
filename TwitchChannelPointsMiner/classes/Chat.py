@@ -1,5 +1,6 @@
 import logging
 import socket
+import ssl
 import time
 from enum import Enum, auto
 from threading import Thread
@@ -12,18 +13,31 @@ from TwitchChannelPointsMiner.classes.Settings import Events, Settings
 logger = logging.getLogger(__name__)
 
 
+def _wrap_tls(sock, host):
+    """TLS-Handshake auf einem bereits verbundenen Socket (IRC-over-TLS, 6697).
+
+    server_hostname = der IRC-Host (SNI + Zertifikatsprüfung), NICHT der Proxy.
+    Ein echter Twitch-Chatclient spricht verschlüsselt; ohne das wäre der
+    oauth:<TV-Token> im Klartext ein Transport-Bot-Tell.
+    """
+    ctx = ssl.create_default_context()
+    tls = ctx.wrap_socket(sock, server_hostname=host)
+    tls.settimeout(None)
+    return tls
+
+
 def _proxy_connect_factory(proxy):
     """irc connect_factory that routes the chat TCP socket through the account
     proxy, so chat presence does not leak the real host IP while every other
     request goes through the proxy. Falls back to a direct (but timeout-bounded)
-    connection when no proxy is configured.
+    connection when no proxy is configured. The socket is always wrapped in TLS
+    (Twitch IRC-over-TLS on 6697).
     """
     if proxy is None:
         def direct_factory(server_address):
             host, port = server_address
             sock = socket.create_connection((host, int(port)), timeout=20)
-            sock.settimeout(None)
-            return sock
+            return _wrap_tls(sock, host)
 
         return direct_factory
 
@@ -47,8 +61,7 @@ def _proxy_connect_factory(proxy):
         )
         sock.settimeout(20)
         sock.connect((host, int(port)))
-        sock.settimeout(None)
-        return sock
+        return _wrap_tls(sock, host)
 
     return factory
 

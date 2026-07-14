@@ -8,7 +8,9 @@ spends points; this module is the explicit "spend points on a custom reward"
 side, triggered manually from the UI.
 """
 import json
+import os
 import pickle
+import re
 import threading
 import time
 import uuid
@@ -323,7 +325,15 @@ GQL_ENDPOINT = "https://gql.twitch.tv/gql"
 # TV-Signatur für ChannelPointsContext, RedeemCustomReward, HeistStreamCheck,
 # ActivePredictionEvents und MakePrediction akzeptiert wird.
 TWITCH_TV_CLIENT_ID = "ue6666qo983tsx6so1t0vnawi233wa"
+# Fallback-/Startwert; die tatsächlich gesendete Version wird live gecacht (s.u.),
+# damit der Backend-Traffic NICHT mit einer seit Monaten fixen, kohortenweit
+# identischen Version aus dem Bild fällt bzw. gegenüber dem Miner (der die Version
+# live scrapt) inkohärent ist.
 TWITCH_CLIENT_VERSION = "ef928475-9403-42f2-8a34-55784bd08e16"
+# Geo-passendes Accept-Language (Proxys sind DE) — echte Clients senden es auf GQL.
+_ACCEPT_LANGUAGE = os.environ.get(
+    "BACKEND_ACCEPT_LANGUAGE", "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7"
+)
 # Wie der Miner: eine zufällige Session-Id pro Prozess (nicht pro Request).
 _CLIENT_SESSION_ID = uuid.uuid4().hex
 # Fallback-UA (ein plausibler TV-App-String), falls ein Account-Row (noch) kein
@@ -334,12 +344,41 @@ _FALLBACK_TV_UA = ("Dalvik/2.1.0 (Linux; U; Android 9; SHIELD Android TV "
 _fp_cache: dict = {}             # username -> extra_headers (device_id/ua immutable)
 _fp_lock = threading.Lock()
 
+# Live-Client-Version (wie der Miner): einmal von der Homepage scrapen, cachen und
+# höchstens alle TTL s erneuern. Direkt (nicht account-gebunden, unauthentifiziert),
+# Fallback auf die Konstante. So tragen Backend- und Miner-Traffic dieselbe, aktuelle
+# Version statt eines stale/kohortenweit-identischen Werts.
+_CLIENT_VERSION_TTL = float(os.environ.get("BACKEND_CLIENT_VERSION_TTL", str(6 * 3600)))
+_TWILIGHT_RE = re.compile(
+    r'window\.__twilightBuildID\s*=\s*"([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-'
+    r'[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"'
+)
+_cv_cache = {"v": TWITCH_CLIENT_VERSION, "ts": 0.0}
+_cv_lock = threading.Lock()
+
+
+def live_client_version() -> str:
+    now = time.time()
+    with _cv_lock:
+        if now - _cv_cache["ts"] < _CLIENT_VERSION_TTL:
+            return _cv_cache["v"]
+        _cv_cache["ts"] = now  # vor dem Fetch setzen -> kein Thundering Herd
+    try:
+        r = requests.get("https://www.twitch.tv", timeout=8)
+        m = _TWILIGHT_RE.search(r.text)
+        if m:
+            with _cv_lock:
+                _cv_cache["v"] = m.group(1)
+    except requests.exceptions.RequestException:
+        pass
+    return _cv_cache["v"]
+
 
 def fp_headers(device_id: "str | None" = None,
                user_agent: "str | None" = None) -> dict:
     """TV-Signatur-Header (Client-Id/UA/X-Device-Id/Version/Session)."""
     h = {"Client-Id": TWITCH_TV_CLIENT_ID,
-         "Client-Version": TWITCH_CLIENT_VERSION,
+         "Client-Version": live_client_version(),
          "Client-Session-Id": _CLIENT_SESSION_ID,
          "User-Agent": user_agent or _FALLBACK_TV_UA}
     if device_id:
@@ -479,14 +518,18 @@ def account_creds(session: Session, account: Account):
 
 def _gql(token, proxies, operation_name, query, variables, timeout=15,
          extra_headers=None):
+    # Fail-safe TV-Default: der Basis-Header ist bereits die TV-Signatur (der
+    # Token IST für den TV-Client ausgestellt). Früher war der Default die
+    # Web-Client-Id — ein Aufruf ohne extra_headers schickte dann einen TV-Token
+    # hinter Web-Client-Id mit python-UA ohne X-Device-Id (genau die auffällige
+    # Kombination). extra_headers (account_fp) überschreibt UA/X-Device-Id mit der
+    # persistierten Signatur des konkreten Accounts.
     headers = {
         "Content-Type": "application/json",
-        "Client-Id": TWITCH_WEB_CLIENT_ID,
+        "Accept-Language": _ACCEPT_LANGUAGE,
         "Authorization": f"OAuth {token}",
+        **fp_headers(),
     }
-    # Optionaler Fingerabdruck (Client-Id/User-Agent/X-Device-Id ...), damit der
-    # Request zur TV-Signatur des Accounts passt, mit der sein Token ausgestellt
-    # wurde. Überschreibt bei Bedarf auch die Default-Client-Id.
     if extra_headers:
         headers.update(extra_headers)
     body = {"operationName": operation_name, "query": query, "variables": variables}

@@ -25,6 +25,8 @@ class PredictionConfig(BaseModel):
     spacing_max: float | None = None
     bet_pct_min: float | None = None
     bet_pct_max: float | None = None
+    participation_pct: float | None = None
+    counter_pct: float | None = None
 
 
 @router.get("/config")
@@ -51,6 +53,12 @@ def put_config(body: PredictionConfig, session: Session = Depends(get_session)):
     if body.bet_pct_max is not None:
         prediction.set_setting(session, prediction.BET_PCT_MAX_KEY,
                                str(max(1.0, min(100.0, float(body.bet_pct_max)))))
+    if body.participation_pct is not None:
+        prediction.set_setting(session, prediction.PARTICIPATION_PCT_KEY,
+                               str(max(1.0, min(100.0, float(body.participation_pct)))))
+    if body.counter_pct is not None:
+        prediction.set_setting(session, prediction.COUNTER_PCT_KEY,
+                               str(max(0.0, min(100.0, float(body.counter_pct)))))
     session.commit()
     return prediction.get_config(session)
 
@@ -156,7 +164,8 @@ def start_bet(body: BetRequest, session: Session = Depends(get_session)):
     try:
         run_id = prediction.start_run(ch, event, body.outcome_id, candidates,
                                       cfg["spacing_min"], cfg["spacing_max"],
-                                      cfg["bet_pct_min"], cfg["bet_pct_max"])
+                                      cfg["bet_pct_min"], cfg["bet_pct_max"],
+                                      cfg["participation_pct"], cfg["counter_pct"])
     except RuntimeError:
         raise HTTPException(409, "es läuft bereits eine Wett-Runde")
     outcome = next(o for o in event["outcomes"] if o["id"] == body.outcome_id)

@@ -50,7 +50,8 @@ def get_config(username: str, session: Session = Depends(get_session)):
     cover_cfg = cover.get_config(session)
     # Ausgeschlossene Accounts (z.B. der echte Hauptaccount patriqcs) bekommen
     # KEINE Tarn-Kanäle — ihr Verhalten bleibt sauber/real.
-    if not cover.is_excluded(acc.username, cover_cfg):
+    is_clean = cover.is_excluded(acc.username, cover_cfg)
+    if not is_clean:
         for ch in cover.cover_for_account(acc.id, cover_cfg, exclude=farm_lower):
             streamers.append(ch)
 
@@ -80,6 +81,9 @@ def get_config(username: str, session: Session = Depends(get_session)):
         "ua_app": acc.ua_app,
         "ua_web": acc.ua_web,
         "account_age_days": age_days,
+        # True für den echten Hauptaccount (cover-excluded): der Miner lässt dann
+        # die Feature-Flags auf sauberem Default und variiert sie NICHT.
+        "clean": is_clean,
     }
 
 
