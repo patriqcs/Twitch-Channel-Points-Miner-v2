@@ -81,11 +81,12 @@ class _TimeoutHTTPAdapter(HTTPAdapter):
 
 
 class Twitch(object):
-    # Operationen, deren persistierter Hash von Twitch verworfen wurde
-    # (PersistedQueryNotFound). Prozessweit (Klassenattribut, nicht in
-    # __slots__), damit alle Account-Instanzen nach dem ersten Miss direkt den
-    # Volltext senden statt jedes Mal erneut den toten Hash zu probieren.
-    _dead_persisted_ops = set()
+    # Operationen, für die in diesem Prozess bereits einmal die APQ-
+    # Neuregistrierung (PersistedQueryNotFound → Volltext+Hash) geloggt wurde.
+    # Nur zur Log-Entprellung — steuert KEIN Verhalten: jeder Request versucht
+    # weiterhin optimistisch Hash-only (wie der echte Apollo-Client) und
+    # registriert erst bei einem echten Miss nach.
+    _apq_warned_ops = set()
 
     __slots__ = [
         "cookies_file",
@@ -428,10 +429,6 @@ class Twitch(object):
             self.__chuncked_sleep(random_sleep * 60, chunk_size=chunk_size)
 
     def post_gql_request(self, json_data):
-        # Für bereits als tot bekannte Persisted-Query-Hashes direkt den
-        # Volltext senden — spart den garantiert scheiternden Hash-Request und
-        # das auffällige "toter-Hash → Volltext"-Doppelmuster pro Aufruf.
-        json_data = self.__inject_full_queries(json_data)
         try:
             response = self.session.post(
                 GQLOperations.url,
@@ -461,24 +458,6 @@ class Twitch(object):
             logger.error(f"Error with GQLOperations ({operation}): {e}")
             return {}
 
-    def __inject_full_queries(self, json_data):
-        # Ersetzt den persistierten Hash durch den Volltext, sobald die
-        # Operation als tot memoisiert ist (siehe _dead_persisted_ops).
-        if isinstance(json_data, list):
-            return [self.__inject_full_queries(req) for req in json_data]
-        if not isinstance(json_data, dict):
-            return json_data
-        operation = json_data.get("operationName")
-        if (
-            operation in Twitch._dead_persisted_ops
-            and operation in GQL_FULL_QUERIES
-            and "query" not in json_data
-        ):
-            json_data = dict(json_data)
-            json_data["query"] = GQL_FULL_QUERIES[operation]
-            json_data.pop("extensions", None)
-        return json_data
-
     def __handle_gql_response(self, json_data, result):
         # Batch-Requests (Liste) elementweise behandeln, Form bleibt erhalten.
         if isinstance(json_data, list):
@@ -499,10 +478,13 @@ class Twitch(object):
             return result
 
         # Kein nutzbares "data": GQL-Fehlerantwort. Twitchs APQ-Cache verwirft
-        # alte Persisted-Query-Hashes; der echte Client sendet dann den vollen
-        # Query-Text nach — das tun wir auch. Die Operation wird prozessweit als
-        # tot gemerkt, sodass Folge-Requests direkt den Volltext tragen (der
-        # Retry selbst trägt "query" und landet nie wieder in diesem Zweig).
+        # periodisch Persisted-Query-Hashes (PersistedQueryNotFound). Der echte
+        # Apollo-Client sendet dann EINMAL den vollen Query-Text ZUSAMMEN mit dem
+        # passenden persistedQuery-Hash nach — Twitch registriert damit hash→query
+        # neu und akzeptiert danach wieder Hash-only-Requests. Genau das machen
+        # wir hier (Volltext + selbst-konsistenter sha256Hash), statt dauerhaft
+        # auf Volltext umzuschalten. So bleibt der Traffic 1:1 wie ein normaler
+        # Client (Hash-only im Normalfall, Registrierung nur direkt nach Rotation).
         errors = result.get("errors") or []
         messages = {
             e.get("message") for e in errors if isinstance(e, dict)
@@ -513,16 +495,24 @@ class Twitch(object):
             and "query" not in json_data
             and operation in GQL_FULL_QUERIES
         ):
-            if operation not in Twitch._dead_persisted_ops:
-                Twitch._dead_persisted_ops.add(operation)
-                logger.warning(
-                    f"Persisted query hash for {operation} was rejected by "
-                    "Twitch; using the full query text for the rest of this run."
+            if operation not in Twitch._apq_warned_ops:
+                Twitch._apq_warned_ops.add(operation)
+                logger.info(
+                    f"Persisted query hash for {operation} was purged by Twitch; "
+                    "re-registering it via the APQ full-query handshake."
                 )
+            full = GQL_FULL_QUERIES[operation]
+            # sha256(Volltext) muss zur Query passen, damit Twitch die
+            # Registrierung annimmt — unabhängig vom (evtl. veralteten) in
+            # GQLOperations hinterlegten Hash.
+            sha = hashlib.sha256(full.encode("utf-8")).hexdigest()
             retry = {
                 "operationName": operation,
                 "variables": json_data.get("variables", {}),
-                "query": GQL_FULL_QUERIES[operation],
+                "query": full,
+                "extensions": {
+                    "persistedQuery": {"version": 1, "sha256Hash": sha}
+                },
             }
             return self.post_gql_request(retry)
 

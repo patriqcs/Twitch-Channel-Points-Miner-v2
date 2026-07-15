@@ -123,7 +123,7 @@ class GQLOperations:
         "extensions": {
             "persistedQuery": {
                 "version": 1,
-                "sha256Hash": "e2d67415aead910f7f9ceb45a77b750a1e1d9622c936d832328a0689e054db62",
+                "sha256Hash": "617631abc4062abcc732f9b715a126689cff0374479617199722016384c43c56",
             }
         },
     }
@@ -159,7 +159,7 @@ class GQLOperations:
         "extensions": {
             "persistedQuery": {
                 "version": 1,
-                "sha256Hash": "df5d55b6401389afb12d3017c9b2cf1237164220c8ef4ed754eae8188068a807",
+                "sha256Hash": "b294fbba2f83e8cc0c63947fcd54983dab22c628000f321cf4bec23b48f0c5bc",
             }
         },
     }
@@ -199,7 +199,7 @@ class GQLOperations:
         "extensions": {
             "persistedQuery": {
                 "version": 1,
-                "sha256Hash": "f6396f5ffdde867a8f6f6da18286e4baf02e5b98d14689a69b5af320a4c7b7b8",
+                "sha256Hash": "856fa861f23670ebe20749589bff4a423ed967b43b172946ade7e48ef1d66e1b",
             }
         },
     }
@@ -208,7 +208,7 @@ class GQLOperations:
         "extensions": {
             "persistedQuery": {
                 "version": 1,
-                "sha256Hash": "9a62a09bce5b53e26e64a671e530bc599cb6aab1e5ba3cbd5d85966d3940716f",
+                "sha256Hash": "02b2aea58a66d266426370d2dc56da49f7255c68110410a5e2993d0bbf883f27",
             }
         },
     }
