@@ -35,7 +35,9 @@ HEADERS = {"X-Internal-Token": INTERNAL_TOKEN}
 # can follow even when a channel requires phone verification, and the sub shows
 # up as a SUB_* points multiplier the miner already loads — so we piggyback on
 # that signal and fire a one-time follow through the account's proxy + token.
-AUTO_FOLLOW_ON_SUB = os.environ.get("AUTO_FOLLOW_ON_SUB", "1").strip().lower() in (
+# Default off: Twitch answers with "requires challenge" for these accounts,
+# so the periodic retry only spams the log (opt-in via AUTO_FOLLOW_ON_SUB=1).
+AUTO_FOLLOW_ON_SUB = os.environ.get("AUTO_FOLLOW_ON_SUB", "0").strip().lower() in (
     "1", "true", "yes", "on"
 )
 FOLLOW_RETRY_COOLDOWN = float(os.environ.get("AUTO_FOLLOW_RETRY_COOLDOWN", "1800"))
