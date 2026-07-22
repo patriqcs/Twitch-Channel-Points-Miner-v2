@@ -52,9 +52,25 @@ if [ -n "$SRC" ]; then
       echo "!!! WARN: Mullvad gateway 10.64.0.1 not reachable yet (tunnel may still be settling)."
     fi
   else
-    echo "!!! WARN: 'wg-quick up wg0' FAILED. Need --cap-add=NET_ADMIN and --device /dev/net/tun,"
-    echo "!!!       and a kernel with WireGuard support. Starting WITHOUT tunnel -> Mullvad relays"
-    echo "!!!       will be unreachable, but the app and direct mining still work."
+    # A present Mullvad config means the deployment expects proxied operation.
+    # Starting without the tunnel leaves every proxy account silently dead
+    # (relays 10.124.x are only reachable inside wg0), so fail hard and make
+    # the broken deploy visible in the Docker UI. WG_OPTIONAL=1 restores the
+    # old degraded-start behaviour.
+    case "$(printf '%s' "${WG_OPTIONAL:-false}" | tr '[:upper:]' '[:lower:]')" in
+      1|true|yes|on)
+        echo "!!! WARN: 'wg-quick up wg0' FAILED. Need --cap-add=NET_ADMIN and --device /dev/net/tun,"
+        echo "!!!       and a kernel with WireGuard support. WG_OPTIONAL set -> starting WITHOUT"
+        echo "!!!       tunnel; Mullvad relays will be unreachable."
+        ;;
+      *)
+        echo "!!! FATAL: 'wg-quick up wg0' FAILED but a Mullvad config is present."
+        echo "!!!        Need --cap-add=NET_ADMIN and --device /dev/net/tun (Unraid template"
+        echo "!!!        ExtraParams). Refusing to start without tunnel — all proxy accounts"
+        echo "!!!        would be dead. Set WG_OPTIONAL=1 to start degraded anyway."
+        exit 1
+        ;;
+    esac
   fi
 else
   echo ">>> No Mullvad config (MULLVAD_WG_CONF / /data/mullvad.conf) — starting without tunnel."
