@@ -363,3 +363,13 @@ def test_pick_channel_skips_excluded_channels():
     assert quest.pick_from_directory([
         {"node": {"viewersCount": 5, "language": "DE", "broadcaster": {"id": "1", "login": "a"},
                   "game": {"id": "509658", "displayName": "Just Chatting"}}}], {"509658"}, exclude={"a"}) is None
+
+
+def test_plan_continues_on_same_lane_with_next_stage_after_first_stage_done():
+    # Glutexo (fertig) und Glurak (offen) teilen sich dieselbe Lane-ID
+    lanes = _lanes(_group("Charmeleon", "lane-char", minutes=20, grants=3,
+                          window=_window(NOW - timedelta(minutes=5))),
+                   _group("Charizard", "lane-char", minutes=0, grants=0),
+                   _group("Pikachu", "lane-pichu"))
+    d = quest.plan(lanes, selected_lane="lane-char", now=NOW, priority=[])
+    assert d.action == "watch" and d.lane.name == "Charizard" and d.switch is False

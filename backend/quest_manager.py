@@ -162,9 +162,9 @@ class QuestManager(threading.Thread):
 
         # --- laufende Sitzung bewerten
         if self.watch:
-            lane = self._lane_by_id(self.watch["lane"])
+            lane = self._lane_by_group(self.watch["group_id"])
             if lane is None:
-                self._stop_watch("Lane verschwunden")
+                self._stop_watch("Reward-Gruppe verschwunden")
             else:
                 if lane.minutes > self.watch["last_minutes"]:
                     self.watch["last_minutes"] = lane.minutes
@@ -216,8 +216,8 @@ class QuestManager(threading.Thread):
         if d.switch:
             if not self._select_lane(token, proxies, fp, lane):
                 return
-        if self.watch and self.watch["lane"] != lane.lane:
-            self._stop_watch("Lane-Wechsel")
+        if self.watch and self.watch["group_id"] != lane.group_id:
+            self._stop_watch("Wechsel der Reward-Gruppe")
         if not self.watch:
             self._start_watch(token, proxies, fp, lane, cfg, cover_cfg)
         if self.watch:
@@ -264,8 +264,18 @@ class QuestManager(threading.Thread):
             self._log(f"Badge-Liste nicht geladen: {e}")
 
     def _lane_by_id(self, lane_id):
+        """Erste OFFENE Gruppe der Lane (Glutexo/Glurak teilen sich eine Lane-ID)."""
+        open_ = [l for l in self.lanes if l.lane == lane_id and not quest.lane_done(l)]
+        if open_:
+            return open_[0]
         for l in self.lanes:
             if l.lane == lane_id:
+                return l
+        return None
+
+    def _lane_by_group(self, group_id):
+        for l in self.lanes:
+            if l.group_id == group_id:
                 return l
         return None
 
@@ -357,7 +367,7 @@ class QuestManager(threading.Thread):
             return
         now = _now()
         self.watch = {
-            "lane": lane.lane, "lane_name": lane.name, "channel": channel,
+            "lane": lane.lane, "group_id": lane.group_id, "lane_name": lane.name, "channel": channel,
             "channel_id": info["channel_id"], "broadcast_id": info["broadcast_id"],
             "game": info["game"], "game_id": info["game_id"],
             "started_at": now, "start_minutes": lane.minutes,
@@ -399,6 +409,7 @@ class QuestManager(threading.Thread):
                       f"{self.watch['beacons']} Minuten gemeldet")
         self.watch = None
         self._player = None
+        self._last_dir_lookup = 0.0  # nächster Start darf sofort im Verzeichnis suchen
 
     # ------------------------------------------------------------ player session
     # Twitch zählt Reward-Drop-Minuten nur über die Player-Events an die Edge-
@@ -455,7 +466,7 @@ class QuestManager(threading.Thread):
         try:
             # Live-/Kategorie-Check (gecacht, alle LIVE_CACHE Sekunden)
             info = self._stream_info(token, proxies, fp, login)
-            lane = self._lane_by_id(w["lane"])
+            lane = self._lane_by_group(w["group_id"])
             if not info or not info["live"] or lane is None or (
                     info["game_id"] not in lane.categories):
                 self._stop_watch("Kanal offline oder Kategorie gewechselt")
