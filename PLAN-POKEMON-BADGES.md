@@ -76,6 +76,8 @@ Miner: PlaybackAccessToken → usher → Segment-HEAD → Spade), statt die Stre
 24-h-Fenster, also nach vollem Tag sofort zur nächsten Lane wechseln (bis zu 4 × 20 min am Tag statt 1 × 20 min);
 zählt Twitch das nicht, greift der Stall-Fallback (8 min ohne Fortschritt → Lane bis Fensterende pausieren).
 Sind alle Lanes für heute voll, pausiert das Modul bis zum frühesten Fensterablauf.
+**Live bestätigt 2026-11-04:** Glutexo 3/3 → Glurak freigeschaltet und gezählt; Glurak Tag 1 voll → Wechsel auf
+Pikachu, zählt sofort weiter. Rotation funktioniert, Twitch akzeptiert mehrere Lanes am selben Tag.
 
 Ursprünglicher Vorschlag:
 
