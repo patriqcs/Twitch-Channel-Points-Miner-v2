@@ -10,6 +10,9 @@
 - UI: Tab „Badges“ mit Evolutionslinien (Badge-Bilder von Twitch), Tages-Punkte, Minutenbalken, manueller
   Lane-Wahl, Einstellungen (Account, Reihenfolge, Kanal-Pool, Deckel) und Verlauf.
 - Default AUS (`QUEST_ENABLED` in den AppSettings); Thread-Flag `QUEST_MANAGER_ENABLED` (Env, Default an).
+- Deployed + live verifiziert 2026-11-04 22:16 (f57c6e4): Zählung nur über Player-Events an die Edge-Tracking-URL
+  aus dem Master-Manifest (Spade-Beacon zählt für Reward-Drops nicht, siehe PLAN-POKEMON-BADGES.md Abschnitt 3);
+  Glutexo abgeschlossen, Glurak läuft. Stufen einer Linie teilen die Lane-ID → Sitzung = group_id.
 - Tests lokal: `.venv/bin/python -m pytest tests` (pytest nur in der lokalen venv, nicht im Image).
 
 # STAND — Web-Redeem (Stand: 2026-07-04)

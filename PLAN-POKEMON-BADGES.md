@@ -55,8 +55,12 @@ Alle lassen sich über den vorhandenen Backend-Helfer `redeem._gql(token, proxie
 | Verdiente Reward-Items | `BadgeCollectionEarnedRewards` | `inventory.earnedDropRewards(first:100)` |
 | Badge im Chat tragen (optional) | Mutation `ChatSettings_SelectGlobalBadge` | `selectGlobalBadge(input:)` |
 
-Die Watch-Zählung selbst läuft über denselben Spade-`minute-watched`-Beacon, den der Miner schon
-sendet (`channel_id`, `broadcast_id`, `game`/`game_id` bei `claim_drops=True`). Twitch ordnet die
+**Korrektur (Live-Test 2026-11-04):** Für Reward-Drops zählt das Spade-Beacon des Miners NICHT (0 Minuten bei 60 s
+und 20 s-Takt). Gezählt werden nur die Player-Events, die der Web-Player an die Edge-Tracking-URL des HLS-Knotens
+schickt (base64 im Usher-Master-Manifest `#EXT-X-TWITCH-INFO C=…`; Body `data=<base64 JSON>`; Felder u. a. serving_id,
+video_session_id, play_session_id, device_id, platform=web, minutes_logged), plus echte Segment-Downloads. So umgesetzt
+in `quest_manager._player_tick`; Ergebnis: 1 Minute pro Minute. Ursprüngliche Annahme (überholt): Die Watch-Zählung
+läuft über denselben Spade-`minute-watched`-Beacon, den der Miner schon sendet (`channel_id`, `broadcast_id`, `game`/`game_id` bei `claim_drops=True`). Twitch ordnet die
 Kategorie serverseitig über den Broadcast zu; es muss also nur ein **Live-Kanal in einer
 qualifizierten Kategorie** geschaut werden. Ein Drop-Fortschritt wird nur auf einem Kanal
 gleichzeitig gezählt (j4nkttv ist nicht qualifiziert → kein Konflikt).
