@@ -300,3 +300,58 @@ def test_pick_from_directory_takes_biggest_stream_in_category():
     ]
     assert quest.pick_from_directory(edges, {"509658"}) == "big"
     assert quest.pick_from_directory([], {"509658"}) is None
+
+
+# ---------------------------------------------------------------- player session (Edge-Tracking)
+
+MASTER = """#EXTM3U
+#EXT-X-TWITCH-INFO:NODE="dacaf1fd2c05.j.cloudfront.hls.ttvnw.net",MANIFEST-NODE-TYPE="weaver_cluster",MANIFEST-NODE="elastic-weaver.euc12",SUPPRESS="true",SERVER-TIME="1793825615.05",TRANSCODESTACK="transmux",TRANSCODEMODE="cbr_v1",USER-IP="1.2.3.4",SERVING-ID="2e36c4996c3f4bac94991abccb7cbf79",CLUSTER="cloudfront_prod_euc12_twitch_ispc",ABS="true",VIDEO-SESSION-ID="1903256118941097813",BROADCAST-ID="319264074342",STREAM-TIME="15756.0",FUTURE="true",B="false",USER-COUNTRY="DE",MANIFEST-CLUSTER="euc12",ORIGIN="euc12",C="aHR0cHM6Ly8zYjkwMzgucnVmaW8uaGxzLmxpdmUtdmlkZW8ubmV0L3YxL3NlZ21lbnQvQUJD"
+#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="chunked",NAME="1080p60 (source)",AUTOSELECT=YES,DEFAULT=YES
+#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080,CODECS="avc1.64002A,mp4a.40.2",VIDEO="chunked",FRAME-RATE=60.000
+https://edge.example/chunked.m3u8
+#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID="160p30",NAME="160p",AUTOSELECT=YES,DEFAULT=YES
+#EXT-X-STREAM-INF:BANDWIDTH=230000,RESOLUTION=284x160,CODECS="avc1.4D400C,mp4a.40.2",VIDEO="160p30",FRAME-RATE=30.000
+https://edge.example/160p30.m3u8
+"""
+
+
+def test_parse_master_manifest_extracts_tracking_url_session_and_lowest_variant():
+    m = quest.parse_master_manifest(MASTER)
+    assert m["track_url"] == "https://3b9038.rufio.hls.live-video.net/v1/segment/ABC"
+    assert m["serving_id"] == "2e36c4996c3f4bac94991abccb7cbf79"
+    assert m["video_session_id"] == "1903256118941097813"
+    assert m["broadcast_id"] == "319264074342"
+    assert m["node"] == "dacaf1fd2c05.j.cloudfront.hls.ttvnw.net"
+    assert m["lowest_url"] == "https://edge.example/160p30.m3u8"
+    assert m["lowest_format"] == "160p30"
+
+
+def test_parse_master_manifest_without_tracking_url_returns_none_track():
+    text = MASTER.replace(',C="aHR0cHM6Ly8zYjkwMzgucnVmaW8uaGxzLmxpdmUtdmlkZW8ubmV0L3YxL3NlZ21lbnQvQUJD"', "")
+    m = quest.parse_master_manifest(text)
+    assert m["track_url"] is None and m["lowest_url"].endswith("160p30.m3u8")
+
+
+def test_player_event_payload_carries_identity_session_and_minutes():
+    m = quest.parse_master_manifest(MASTER)
+    raw = quest.player_event_payload(
+        "minute-watched", manifest=m, login="krokoboss", channel_id="78874179",
+        user_id="73632915", user_login="patriqcs", device_id="dev-1", user_agent="UA/1",
+        play_session_id="psid", game="Just Chatting", game_id="509658",
+        minutes_logged=3, position=180.0)
+    body = json.loads(base64.b64decode(raw))
+    p = body["properties"]
+    assert body["event"] == "minute-watched"
+    assert p["minutes_logged"] == 3 and p["user_id"] == "73632915" and p["login"] == "patriqcs"
+    assert p["serving_id"] == m["serving_id"] and p["video_session_id"] == m["video_session_id"]
+    assert p["play_session_id"] == "psid" and p["device_id"] == "dev-1"
+    assert p["platform"] == "web" and p["player"] == "site" and p["live"] is True
+    assert p["channel"] == "krokoboss" and p["channel_id"] == "78874179"
+    assert p["broadcast_id"] == "319264074342"
+    assert p["game_id"] == "509658" and p["stream_format"] == "160p30"
+
+
+def test_new_segments_returns_unseen_segment_urls_in_order():
+    playlist = "#EXTM3U\n#EXTINF:2.0,\nhttps://e/s1.ts\n#EXTINF:2.0,\nhttps://e/s2.ts\n#EXTINF:2.0,\nhttps://e/s3.ts\n"
+    assert quest.new_segments(playlist, seen={"https://e/s1.ts"}, limit=2) == ["https://e/s2.ts", "https://e/s3.ts"]
+    assert quest.new_segments(playlist, seen={"https://e/s1.ts", "https://e/s2.ts", "https://e/s3.ts"}, limit=2) == []

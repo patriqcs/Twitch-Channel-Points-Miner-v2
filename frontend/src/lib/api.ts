@@ -333,6 +333,8 @@ export interface QuestStatus {
     last_minutes: number;
     beacons: number;
     beacon_errors: number;
+    bytes_kb?: number;
+    minutes_logged?: number;
   } | null;
   decision: { action: string; reason: string; lane: string | null; resume_at: string | null } | null;
   last_error: string;

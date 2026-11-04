@@ -190,7 +190,7 @@ export default function Quests() {
 
   let headline = "Modul aus";
   if (cfg.enabled) {
-    if (watch) headline = `👀 schaut ${watch.channel} (${watch.game ?? "?"}) für ${watch.lane_name_de} · ${watch.beacons} Beacons`;
+    if (watch) headline = `👀 schaut ${watch.channel} (${watch.game ?? "?"}) für ${watch.lane_name_de} · ${watch.minutes_logged ?? watch.beacons} min gemeldet · ${Math.round((watch.bytes_kb ?? 0) / 1024)} MB`;
     else if (d?.action === "idle") headline = `🌙 Pause – alle Lanes für heute voll, weiter ${fmtIn(d.resume_at, now)} (${fmtTime(d.resume_at)})`;
     else if (d?.action === "done") headline = "🏁 Alles freigeschaltet – nichts mehr zu tun";
     else if (d?.action === "watch") headline = "🔎 suche Live-Kanal in einer zählenden Kategorie…";

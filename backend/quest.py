@@ -417,3 +417,105 @@ def pick_from_directory(edges: list, categories: set):
         if v > best_v:
             best, best_v = login, v
     return best
+
+
+# ---------------------------------------------------------------- player session (Edge-Tracking)
+# Befund 2026-11-04: Für Reward-Drops zählt Twitch NICHT mehr das alte
+# spade.twitch.tv-Beacon des Miners, sondern nur die Player-Events, die der echte
+# Web-Player an die Tracking-URL des HLS-Edge-Knotens schickt. Diese URL steht
+# base64-kodiert im Usher-Master-Manifest (`#EXT-X-TWITCH-INFO … C="…"`), zusammen
+# mit SERVING-ID / VIDEO-SESSION-ID, die in jedem Event mitlaufen müssen.
+import re as _re
+import uuid as _uuid
+
+
+def parse_master_manifest(text: str) -> dict:
+    """Usher-Master-m3u8 -> Tracking-URL, Session-IDs, niedrigste Variante."""
+    attrs = {}
+    lines = (text or "").split("\n")
+    for line in lines:
+        if line.startswith("#EXT-X-TWITCH-INFO"):
+            attrs = dict(_re.findall(r'([A-Z\-]+)="([^"]*)"', line))
+            break
+    track_url = None
+    c = attrs.get("C")
+    if c:
+        try:
+            track_url = base64.b64decode(c + "=" * (-len(c) % 4)).decode("utf-8")
+        except Exception:  # noqa: BLE001
+            track_url = None
+    variants = []
+    for i, line in enumerate(lines):
+        if line.startswith("http") and i > 0:
+            fmt = ""
+            for back in range(i - 1, max(-1, i - 3), -1):
+                m = _re.search(r'GROUP-ID="([^"]+)"', lines[back])
+                if m:
+                    fmt = m.group(1)
+                    break
+            variants.append((fmt, line.strip()))
+    return {
+        "track_url": track_url,
+        "serving_id": attrs.get("SERVING-ID"),
+        "video_session_id": attrs.get("VIDEO-SESSION-ID"),
+        "broadcast_id": attrs.get("BROADCAST-ID"),
+        "node": attrs.get("NODE"),
+        "cluster": attrs.get("CLUSTER"),
+        "manifest_node": attrs.get("MANIFEST-NODE"),
+        "manifest_node_type": attrs.get("MANIFEST-NODE-TYPE"),
+        "manifest_cluster": attrs.get("MANIFEST-CLUSTER"),
+        "origin": attrs.get("ORIGIN"),
+        "transcode_mode": attrs.get("TRANSCODEMODE"),
+        "transcoder_type": attrs.get("TRANSCODESTACK"),
+        "lowest_url": variants[-1][1] if variants else None,
+        "lowest_format": variants[-1][0] if variants else "",
+    }
+
+
+def new_play_session_id() -> str:
+    return _uuid.uuid4().hex
+
+
+def player_event_payload(event: str, manifest: dict, login: str, channel_id: str,
+                         user_id: str, user_login: str, device_id: str, user_agent: str,
+                         play_session_id: str, game, game_id, minutes_logged: int,
+                         position: float, now: "float | None" = None) -> str:
+    """Base64-Body (`data=`) eines Player-Events, Feldsatz wie der Web-Player (twilight)."""
+    import time as _time
+    ts = now if now is not None else _time.time()
+    props = {
+        "backend": "mediaplayer", "broadcast_id": manifest.get("broadcast_id"),
+        "browser_family": "chrome", "browser_version": "142.0", "build_dist_id": "npm",
+        "channel": login, "channel_id": channel_id, "client_app": "twilight",
+        "client_time": _time.strftime("%Y-%m-%dT%H:%M:%S.000Z", _time.gmtime(ts)),
+        "cluster": manifest.get("cluster"), "content_mode": "live",
+        "core_version": "1.58.0-rc.2", "device_id": device_id, "domain": "twitch.tv",
+        "hidden": False, "host": "www.twitch.tv", "live": True, "low_latency": True,
+        "login": user_login, "manifest_cluster": manifest.get("manifest_cluster"),
+        "manifest_node": manifest.get("manifest_node"),
+        "manifest_node_type": manifest.get("manifest_node_type"), "minutes_logged": minutes_logged,
+        "muted": False, "node": manifest.get("node"), "origin_dc": manifest.get("origin"),
+        "os_name": "Windows", "os_version": "10", "platform": "web",
+        "play_session_id": play_session_id, "playback_rate": 1, "player": "site",
+        "player_position": round(position, 3), "player_state": "Playing", "protocol": "HLS",
+        "quality": "auto", "seconds_offset": round(position, 3),
+        "serving_id": manifest.get("serving_id"), "sink_type": "mse-worker",
+        "stream_format": manifest.get("lowest_format") or "160p30", "stream_type": "live",
+        "time": round(ts, 3), "transcode_mode": manifest.get("transcode_mode"),
+        "transcoder_type": manifest.get("transcoder_type"), "url": f"https://www.twitch.tv/{login}",
+        "user_agent": user_agent, "user_id": user_id,
+        "video_session_id": manifest.get("video_session_id"), "volume": 0.5,
+    }
+    if game is not None and game_id is not None:
+        props["game"] = game
+        props["game_id"] = game_id
+    if event == "video-play":
+        props.update({"location": "channel", "in_ad": False, "preloaded": False})
+    body = json.dumps({"event": event, "properties": props})
+    return base64.b64encode(body.encode("utf-8")).decode("utf-8")
+
+
+def new_segments(playlist: str, seen: set, limit: int = 2) -> list:
+    """Noch nicht geladene Segment-URLs (die letzten `limit`) einer Varianten-Playlist."""
+    segs = [l.strip() for l in (playlist or "").split("\n") if l.startswith("http")]
+    return [s for s in segs[-limit:] if s not in seen]

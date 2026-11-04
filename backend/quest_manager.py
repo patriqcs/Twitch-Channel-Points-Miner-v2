@@ -18,7 +18,6 @@ Zustand ist in-memory (Fortschritt kommt bei jedem Refresh frisch von Twitch).
 """
 import logging
 import random
-import re
 import threading
 import time
 from collections import deque
@@ -38,8 +37,8 @@ REFRESH_WATCHING = 60.0      # s zwischen Fortschritts-Abfragen während des Sch
 REFRESH_IDLE = 300.0         # s im Leerlauf
 BADGES_REFRESH = 1800.0      # s für die Badge-Sammlung
 LIVE_CACHE = 120.0           # s Live-/Kategorie-Cache je Kanal
-BEACON_BASE = 60.0           # s zwischen zwei minute-watched (±Jitter)
-BEACON_JITTER = 0.15
+PLAYLIST_INTERVAL = 4.0      # s zwischen Playlist-/Segment-Abrufen (wie ein Player)
+MINUTE_INTERVAL = 60.0       # s zwischen zwei minute-watched
 BLOCK_FALLBACK_HOURS = 6.0   # Sperre, wenn kein Fensterende bekannt ist
 
 
@@ -69,9 +68,9 @@ class QuestManager(threading.Thread):
         self.resume_at: "datetime | None" = None
         # Watch-Sitzung
         self.watch: "dict | None" = None  # {lane, channel, channel_id, ..., started_at, ...}
-        self._next_beacon = 0.0
+        self._player: "dict | None" = None  # laufende Player-Session (Manifest, Session, Zähler)
         self._live_cache: dict = {}     # login -> (ts, info)
-        self._spade: dict = {}          # login -> spade_url
+        self._device_id: str = ""
         self.log: deque = deque(maxlen=60)
         self._last_nochannel_log = 0.0
         self._last_dir_lookup = 0.0
@@ -127,6 +126,7 @@ class QuestManager(threading.Thread):
             fp = redeem.account_fp(acc)
             ua_web = acc.ua_web or ""
             self._account_id = acc.id
+            self._device_id = acc.device_id or ""
         return token, proxies, fp, ua_web
 
     def _gql(self, token, proxies, fp, op, query, variables=None):
@@ -206,10 +206,8 @@ class QuestManager(threading.Thread):
             self._stop_watch("Lane-Wechsel")
         if not self.watch:
             self._start_watch(token, proxies, fp, lane, cfg, cover_cfg)
-        if self.watch and mono >= self._next_beacon:
-            self._beacon(token, proxies, fp, ua_web)
-            self._next_beacon = time.monotonic() + BEACON_BASE * random.uniform(
-                1 - BEACON_JITTER, 1 + BEACON_JITTER)
+        if self.watch:
+            self._player_tick(token, proxies, fp, ua_web)
 
     # ------------------------------------------------------------ Twitch state
     def _refresh(self, token, proxies, fp):
@@ -348,9 +346,9 @@ class QuestManager(threading.Thread):
             "started_at": now, "start_minutes": lane.minutes,
             "start_grants": lane.grants,
             "last_minutes": lane.minutes, "last_progress_at": now,
-            "beacons": 0, "beacon_errors": 0,
+            "beacons": 0, "beacon_errors": 0, "bytes_kb": 0, "minutes_logged": 0,
         }
-        self._next_beacon = time.monotonic()
+        self._player = None
         self._log(f"Schaue {channel} ({info['game']}) für {quest.german_name(lane.name)} "
                   f"— Tag {lane.grants + 1}/{lane.repeat_times}, {lane.minutes}/{lane.required_minutes} min",
                   event=True)
@@ -381,81 +379,108 @@ class QuestManager(threading.Thread):
     def _stop_watch(self, reason: str):
         if self.watch:
             self._log(f"Watch beendet ({reason}): {self.watch['channel']}, "
-                      f"{self.watch['beacons']} Beacons")
+                      f"{self.watch['beacons']} Minuten gemeldet")
         self.watch = None
+        self._player = None
 
-    # ------------------------------------------------------------ beacon
-    def _spade_url(self, login: str, ua_web: str, proxies) -> str:
-        url = self._spade.get(login)
-        if url:
-            return url
-        headers = {"User-Agent": ua_web or redeem._FALLBACK_TV_UA}
-        page = requests.get(f"https://www.twitch.tv/{login}", headers=headers,
-                            proxies=proxies, timeout=20).text
-        m = re.search(r"(https://static\.twitchcdn\.net/config/settings.*?js|"
-                      r"https://assets\.twitch\.tv/config/settings.*?\.js)", page)
-        if not m:
-            raise RuntimeError("settings.js nicht gefunden")
-        settings = requests.get(m.group(1), headers=headers, proxies=proxies,
-                                timeout=20).text
-        m2 = re.search(r'"spade_url":"(.*?)"', settings)
-        if not m2:
-            raise RuntimeError("spade_url nicht gefunden")
-        self._spade[login] = m2.group(1)
-        return m2.group(1)
+    # ------------------------------------------------------------ player session
+    # Twitch zählt Reward-Drop-Minuten nur über die Player-Events an die Edge-
+    # Tracking-URL aus dem Master-Manifest (siehe quest.parse_master_manifest);
+    # das alte spade.twitch.tv-Beacon des Miners zählt hier nachweislich nicht
+    # (Sonden 2026-11-04). Deshalb: echte Player-Session — Master-Manifest holen,
+    # `video-play`, niedrigste Variante laufend laden, jede Minute `minute-watched`.
+    def _web_headers(self, ua_web: str) -> dict:
+        return {"User-Agent": ua_web or redeem._FALLBACK_TV_UA,
+                "Origin": "https://www.twitch.tv", "Referer": "https://www.twitch.tv/"}
 
-    def _beacon(self, token, proxies, fp, ua_web):
+    def _open_player(self, token, proxies, fp, ua_web, login):
+        pat = self._gql(token, proxies, fp, "PlaybackAccessToken", quest.GQL_PLAYBACK_TOKEN,
+                        {"login": login, "isLive": True, "isVod": False, "vodID": "",
+                         "playerType": "site"})
+        tok = pat.get("streamPlaybackAccessToken") or {}
+        if not tok.get("signature") or not tok.get("value"):
+            raise RuntimeError("kein PlaybackAccessToken")
+        sess = requests.Session()
+        r = sess.get(f"https://usher.ttvnw.net/api/channel/hls/{login}.m3u8",
+                     params={"sig": tok["signature"], "token": tok["value"],
+                             "allow_source": "true", "player_backend": "mediaplayer",
+                             "playlist_include_framerate": "true", "fast_bread": "true",
+                             "p": str(random.randint(1000000, 9999999))},
+                     headers=self._web_headers(ua_web), proxies=proxies, timeout=20)
+        if r.status_code != 200:
+            raise RuntimeError(f"usher {r.status_code}")
+        man = quest.parse_master_manifest(r.text)
+        if not man.get("track_url") or not man.get("lowest_url"):
+            raise RuntimeError("Master-Manifest ohne Tracking-URL/Variante")
+        return {"manifest": man, "psid": quest.new_play_session_id(), "sess": sess,
+                "seen": set(), "minutes": 0, "t0": time.monotonic(),
+                "last_minute": time.monotonic(), "last_playlist": 0.0, "bytes": 0,
+                "errors": 0}
+
+    def _send_event(self, pl, event, login, channel_id, ua_web, proxies, w):
+        payload = quest.player_event_payload(
+            event, manifest=pl["manifest"], login=login, channel_id=channel_id,
+            user_id=self.user_id, user_login=(self._username or "").lower(),
+            device_id=self._device_id, user_agent=ua_web or redeem._FALLBACK_TV_UA,
+            play_session_id=pl["psid"], game=w.get("game"), game_id=w.get("game_id"),
+            minutes_logged=pl["minutes"], position=time.monotonic() - pl["t0"])
+        r = pl["sess"].post(pl["manifest"]["track_url"], data={"data": payload},
+                            headers=self._web_headers(ua_web), proxies=proxies, timeout=20)
+        if r.status_code not in (200, 204):
+            raise RuntimeError(f"tracking {r.status_code}")
+
+    def _player_tick(self, token, proxies, fp, ua_web):
         w = self.watch
         if not w:
             return
         login = w["channel"]
-        ua = fp.get("User-Agent") or redeem._FALLBACK_TV_UA
+        mono = time.monotonic()
         try:
+            # Live-/Kategorie-Check (gecacht, alle LIVE_CACHE Sekunden)
             info = self._stream_info(token, proxies, fp, login)
             lane = self._lane_by_id(w["lane"])
             if not info or not info["live"] or lane is None or (
                     info["game_id"] not in lane.categories):
                 self._stop_watch("Kanal offline oder Kategorie gewechselt")
                 return
-            w["broadcast_id"] = info["broadcast_id"] or w["broadcast_id"]
-            pat = self._gql(token, proxies, fp, "PlaybackAccessToken",
-                            quest.GQL_PLAYBACK_TOKEN,
-                            {"login": login, "isLive": True, "isVod": False,
-                             "vodID": "", "playerType": "site"})
-            tok = pat.get("streamPlaybackAccessToken") or {}
-            sig, val = tok.get("signature"), tok.get("value")
-            if not sig or not val:
-                raise RuntimeError("kein PlaybackAccessToken")
-            m3u8 = requests.get(
-                f"https://usher.ttvnw.net/api/channel/hls/{login}.m3u8",
-                params={"sig": sig, "token": val}, headers={"User-Agent": ua},
-                proxies=proxies, timeout=20)
-            if m3u8.status_code != 200:
-                raise RuntimeError(f"usher {m3u8.status_code}")
-            lowest = [l for l in m3u8.text.split("\n") if l.startswith("http")][-1]
-            pl = requests.get(lowest, headers={"User-Agent": ua}, proxies=proxies, timeout=20)
-            if pl.status_code != 200:
-                raise RuntimeError(f"playlist {pl.status_code}")
-            segs = [l for l in pl.text.split("\n") if l.startswith("http")]
-            if not segs:
-                raise RuntimeError("keine Segmente")
-            requests.head(segs[-1], headers={"User-Agent": ua}, proxies=proxies, timeout=20)
-            spade = self._spade_url(login, ua_web, proxies)
-            payload = quest.minute_watched_payload(
-                channel_id=w["channel_id"], broadcast_id=w["broadcast_id"],
-                user_id=self.user_id, login=login, game=w["game"], game_id=w["game_id"])
-            r = requests.post(spade, data={"data": payload}, headers={"User-Agent": ua},
-                              proxies=proxies, timeout=20)
-            if r.status_code != 204:
-                raise RuntimeError(f"spade {r.status_code}")
-            w["beacons"] += 1
+            pl = self._player
+            if pl is None:
+                pl = self._player = self._open_player(token, proxies, fp, ua_web, login)
+                w["broadcast_id"] = pl["manifest"].get("broadcast_id") or w["broadcast_id"]
+                self._send_event(pl, "video-play", login, w["channel_id"], ua_web, proxies, w)
+                self._log(f"Player-Session für {login} geöffnet (Edge-Tracking)")
+            if mono - pl["last_playlist"] >= PLAYLIST_INTERVAL:
+                pl["last_playlist"] = mono
+                r = pl["sess"].get(pl["manifest"]["lowest_url"], headers=self._web_headers(ua_web),
+                                   proxies=proxies, timeout=20)
+                if r.status_code != 200:
+                    raise RuntimeError(f"playlist {r.status_code}")
+                for seg in quest.new_segments(r.text, pl["seen"], limit=2):
+                    pl["seen"].add(seg)
+                    pl["bytes"] += len(pl["sess"].get(seg, headers=self._web_headers(ua_web),
+                                                      proxies=proxies, timeout=20).content)
+                if len(pl["seen"]) > 500:
+                    pl["seen"] = set(list(pl["seen"])[-100:])
+            if mono - pl["last_minute"] >= MINUTE_INTERVAL * random.uniform(0.97, 1.03):
+                pl["last_minute"] = mono
+                pl["minutes"] += 1
+                self._send_event(pl, "minute-watched", login, w["channel_id"], ua_web, proxies, w)
+                w["beacons"] += 1
+            pl["errors"] = 0
+            w["bytes_kb"] = pl["bytes"] // 1024
+            w["minutes_logged"] = pl["minutes"]
             self.last_error = ""
         except Exception as e:  # noqa: BLE001
             w["beacon_errors"] += 1
-            self.last_error = f"Beacon-Fehler: {e}"
-            logger.warning("quest beacon failed: %s", e)
-            if w["beacon_errors"] >= 10 and w["beacons"] == 0:
-                self._stop_watch("Beacons schlagen dauerhaft fehl")
+            self.last_error = f"Player-Fehler: {e}"
+            logger.warning("quest player failed: %s", e)
+            if self._player is not None:
+                self._player["errors"] += 1
+                if self._player["errors"] >= 5:
+                    self._log("Player-Session neu aufbauen (Fehlerserie)")
+                    self._player = None
+            if w["beacon_errors"] >= 20 and w["beacons"] == 0:
+                self._stop_watch("Player-Session schlägt dauerhaft fehl")
                 self._live_cache.pop(login, None)
 
     # ------------------------------------------------------------ status
