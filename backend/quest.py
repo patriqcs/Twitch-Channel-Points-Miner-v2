@@ -355,10 +355,15 @@ def plan(lanes: list, selected_lane, now: datetime, priority: list,
 
 
 # ---------------------------------------------------------------- channel pick
-def pick_channel(pool: list, live: dict, categories: set, current):
+def pick_channel(pool: list, live: dict, categories: set, current,
+                 exclude: "set | None" = None):
     """live: login -> (game_id, is_live). Bleibt beim aktuellen Kanal, solange
-    er live und in einer zählenden Kategorie ist; sonst erster passender im Pool."""
+    er live und in einer zählenden Kategorie ist; sonst erster passender im Pool.
+    exclude: Kanäle, die zuletzt nicht gezählt haben (werden übersprungen)."""
+    exclude = exclude or set()
     def ok(login):
+        if login in exclude:
+            return False
         info = live.get(login)
         return bool(info and info[1] and str(info[0]) in categories)
     if current and ok(current):
@@ -404,14 +409,15 @@ def watch_outcome(lane: Lane, start_minutes: int, started_at: datetime,
     return "continue"
 
 
-def pick_from_directory(edges: list, categories: set):
+def pick_from_directory(edges: list, categories: set, exclude: "set | None" = None):
     """Login des größten Live-Streams aus einer Verzeichnis-Antwort, dessen Kategorie zählt."""
+    exclude = exclude or set()
     best, best_v = None, -1
     for e in edges or []:
         n = (e or {}).get("node") or {}
         game = n.get("game") or {}
         login = (n.get("broadcaster") or {}).get("login")
-        if not login or str(game.get("id")) not in categories:
+        if not login or login in exclude or str(game.get("id")) not in categories:
             continue
         v = int(n.get("viewersCount") or 0)
         if v > best_v:

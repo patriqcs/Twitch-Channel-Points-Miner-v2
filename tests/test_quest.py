@@ -355,3 +355,11 @@ def test_new_segments_returns_unseen_segment_urls_in_order():
     playlist = "#EXTM3U\n#EXTINF:2.0,\nhttps://e/s1.ts\n#EXTINF:2.0,\nhttps://e/s2.ts\n#EXTINF:2.0,\nhttps://e/s3.ts\n"
     assert quest.new_segments(playlist, seen={"https://e/s1.ts"}, limit=2) == ["https://e/s2.ts", "https://e/s3.ts"]
     assert quest.new_segments(playlist, seen={"https://e/s1.ts", "https://e/s2.ts", "https://e/s3.ts"}, limit=2) == []
+
+
+def test_pick_channel_skips_excluded_channels():
+    live = {"a": ("509658", True), "b": ("509658", True)}
+    assert quest.pick_channel(["a", "b"], live, {"509658"}, current="a", exclude={"a"}) == "b"
+    assert quest.pick_from_directory([
+        {"node": {"viewersCount": 5, "language": "DE", "broadcaster": {"id": "1", "login": "a"},
+                  "game": {"id": "509658", "displayName": "Just Chatting"}}}], {"509658"}, exclude={"a"}) is None

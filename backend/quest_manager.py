@@ -71,6 +71,8 @@ class QuestManager(threading.Thread):
         self._player: "dict | None" = None  # laufende Player-Session (Manifest, Session, Zähler)
         self._live_cache: dict = {}     # login -> (ts, info)
         self._device_id: str = ""
+        self._bad_channels: dict = {}   # login -> datetime: hat zuletzt nicht gezählt
+        self._lane_stalls: dict = {}    # lane -> Anzahl Stalls heute
         self.log: deque = deque(maxlen=60)
         self._last_nochannel_log = 0.0
         self._last_dir_lookup = 0.0
@@ -103,7 +105,7 @@ class QuestManager(threading.Thread):
 
     # ------------------------------------------------------------ helpers
     def _log(self, msg: str, event: bool = False):
-        line = f"{_now().strftime('%H:%M:%S')} {msg}"
+        line = f"{datetime.now().strftime('%H:%M:%S')} {msg}"
         with self._lock:
             self.log.append(line)
         logger.info("[quest] %s", msg)
@@ -176,17 +178,29 @@ class QuestManager(threading.Thread):
                 if lane.grants > self.watch["start_grants"] or quest.lane_done(lane):
                     outcome = "day_done"
                 if outcome == "day_done":
+                    self._lane_stalls.pop(lane.lane, None)
                     self._log(f"{quest.german_name(lane.name)}: Tag {lane.grants}/{lane.repeat_times} voll "
                               f"({lane.minutes}/{lane.required_minutes} min)", event=True)
                     self._stop_watch("Tagesziel erreicht")
                     self.last_refresh = 0.0
                 elif outcome in ("stalled", "capped"):
-                    until = lane.window_end or (now + timedelta(hours=BLOCK_FALLBACK_HOURS))
-                    self.blocked[lane.lane] = until
-                    self._log(f"{quest.german_name(lane.name)}: kein Fortschritt ({outcome}, "
-                              f"{lane.minutes} min) -> Lane bis {until.strftime('%d.%m. %H:%M')} UTC gesperrt",
-                              event=True)
-                    self._stop_watch(outcome)
+                    ch = self.watch["channel"]
+                    n = self._lane_stalls.get(lane.lane, 0) + 1
+                    self._lane_stalls[lane.lane] = n
+                    # Erst den Kanal wechseln (vielleicht zählt nur dieser nicht),
+                    # erst beim zweiten Fehlschlag die Lane für heute pausieren.
+                    self._bad_channels[ch] = now + timedelta(hours=BLOCK_FALLBACK_HOURS)
+                    if n < 2:
+                        self._log(f"{quest.german_name(lane.name)}: kein Fortschritt auf {ch} ({outcome}, "
+                                  f"{lane.minutes} min) -> anderer Kanal", event=True)
+                        self._stop_watch(outcome)
+                    else:
+                        until = lane.window_end or (now + timedelta(hours=BLOCK_FALLBACK_HOURS))
+                        self.blocked[lane.lane] = until
+                        self._log(f"{quest.german_name(lane.name)}: kein Fortschritt auch auf {ch} ({outcome}, "
+                                  f"{lane.minutes} min) -> Lane bis {until.astimezone().strftime('%d.%m. %H:%M')} pausiert",
+                                  event=True)
+                        self._stop_watch(outcome)
 
         # --- planen
         selected = self._selected_for(self.lanes)
@@ -326,9 +340,12 @@ class QuestManager(threading.Thread):
             info = self._stream_info(token, proxies, fp, login)
             if info:
                 live[login] = (info["game_id"], info["live"])
-        channel = quest.pick_channel(pool, live, lane.categories, None)
+        now0 = _now()
+        self._bad_channels = {k: v for k, v in self._bad_channels.items() if v > now0}
+        bad = set(self._bad_channels)
+        channel = quest.pick_channel(pool, live, lane.categories, None, exclude=bad)
         if channel is None:
-            channel = self._channel_from_directory(token, proxies, fp, lane)
+            channel = self._channel_from_directory(token, proxies, fp, lane, exclude=bad)
         if channel is None:
             self.last_error = "kein Live-Kanal in einer zählenden Kategorie gefunden"
             if time.monotonic() - self._last_nochannel_log > 600:
@@ -353,7 +370,7 @@ class QuestManager(threading.Thread):
                   f"— Tag {lane.grants + 1}/{lane.repeat_times}, {lane.minutes}/{lane.required_minutes} min",
                   event=True)
 
-    def _channel_from_directory(self, token, proxies, fp, lane):
+    def _channel_from_directory(self, token, proxies, fp, lane, exclude=None):
         """Fallback: größter (bevorzugt deutscher) Live-Stream einer zählenden Kategorie.
         Höchstens alle 2 Minuten abgefragt (Cache wie _stream_info)."""
         if time.monotonic() - self._last_dir_lookup < LIVE_CACHE:
@@ -370,7 +387,7 @@ class QuestManager(threading.Thread):
                     logger.debug("directory %s failed: %s", cat, e)
                     continue
                 edges = ((d.get("game") or {}).get("streams") or {}).get("edges") or []
-                login = quest.pick_from_directory(edges, lane.categories)
+                login = quest.pick_from_directory(edges, lane.categories, exclude=exclude)
                 if login:
                     self._live_cache.pop(login, None)  # frisch holen
                     return login
