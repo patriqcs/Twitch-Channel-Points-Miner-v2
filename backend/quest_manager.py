@@ -73,6 +73,8 @@ class QuestManager(threading.Thread):
         self._live_cache: dict = {}     # login -> (ts, info)
         self._spade: dict = {}          # login -> spade_url
         self.log: deque = deque(maxlen=60)
+        self._last_nochannel_log = 0.0
+        self._last_dir_lookup = 0.0
         self._account_id: "int | None" = None
         self._username: str = ""
 
@@ -213,7 +215,7 @@ class QuestManager(threading.Thread):
     def _refresh(self, token, proxies, fp):
         data = self._gql(token, proxies, fp, "ViewerRewardDropInventory",
                          quest.GQL_INVENTORY)
-        lanes = quest.parse_campaigns(data)
+        lanes = quest.parse_campaigns(data, now=_now())
         self.user_id = str(((data.get("currentUser") or {}).get("id")) or self.user_id)
         tracks = sorted({l.track for l in lanes if l.track})
         selected = {}
@@ -328,13 +330,16 @@ class QuestManager(threading.Thread):
                 live[login] = (info["game_id"], info["live"])
         channel = quest.pick_channel(pool, live, lane.categories, None)
         if channel is None:
-            self.last_error = "kein Live-Kanal in einer zählenden Kategorie im Pool"
-            self._log(self.last_error)
-            self._next_beacon = time.monotonic()
-            # kurz warten, dann erneut versuchen
-            self.last_refresh = time.monotonic() - REFRESH_WATCHING + 90
+            channel = self._channel_from_directory(token, proxies, fp, lane)
+        if channel is None:
+            self.last_error = "kein Live-Kanal in einer zählenden Kategorie gefunden"
+            if time.monotonic() - self._last_nochannel_log > 600:
+                self._log(self.last_error)
+                self._last_nochannel_log = time.monotonic()
             return
         info = self._stream_info(token, proxies, fp, channel)
+        if not info or not info["live"]:
+            return
         now = _now()
         self.watch = {
             "lane": lane.lane, "lane_name": lane.name, "channel": channel,
@@ -349,6 +354,29 @@ class QuestManager(threading.Thread):
         self._log(f"Schaue {channel} ({info['game']}) für {quest.german_name(lane.name)} "
                   f"— Tag {lane.grants + 1}/{lane.repeat_times}, {lane.minutes}/{lane.required_minutes} min",
                   event=True)
+
+    def _channel_from_directory(self, token, proxies, fp, lane):
+        """Fallback: größter (bevorzugt deutscher) Live-Stream einer zählenden Kategorie.
+        Höchstens alle 2 Minuten abgefragt (Cache wie _stream_info)."""
+        if time.monotonic() - self._last_dir_lookup < LIVE_CACHE:
+            return None
+        self._last_dir_lookup = time.monotonic()
+        # Just Chatting zuerst (immer gut gefüllt), dann die übrigen Kategorien.
+        cats = sorted(lane.categories, key=lambda c: (c != "509658", c))
+        for cat in cats[:4]:
+            for langs in (["DE"], None):
+                try:
+                    d = self._gql(token, proxies, fp, "QuestDirectory", quest.GQL_DIRECTORY,
+                                  {"id": cat, "langs": langs})
+                except Exception as e:  # noqa: BLE001
+                    logger.debug("directory %s failed: %s", cat, e)
+                    continue
+                edges = ((d.get("game") or {}).get("streams") or {}).get("edges") or []
+                login = quest.pick_from_directory(edges, lane.categories)
+                if login:
+                    self._live_cache.pop(login, None)  # frisch holen
+                    return login
+        return None
 
     def _stop_watch(self, reason: str):
         if self.watch:

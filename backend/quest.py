@@ -139,6 +139,13 @@ GQL_STREAM_INFO = (
     "user(login: $channel) { id broadcastSettings { id title game { id name displayName } } "
     "stream { id viewersCount game { id displayName } } } }"
 )
+# Verzeichnis-Fallback: größte Live-Streams einer Kategorie (bevorzugt deutsch),
+# falls im Kanal-Pool gerade niemand in einer zählenden Kategorie live ist.
+GQL_DIRECTORY = (
+    "query QuestDirectory($id: ID!, $langs: [String!]) { game(id: $id) { id displayName "
+    "streams(first: 15, options: {sort: VIEWER_COUNT, languages: $langs}) { edges { node { "
+    "id viewersCount language broadcaster { id login displayName } game { id displayName } } } } } }"
+)
 GQL_PLAYBACK_TOKEN = (
     "query PlaybackAccessToken($login: String!, $isLive: Boolean!, $vodID: ID!, "
     "$isVod: Boolean!, $playerType: String!) { "
@@ -207,11 +214,20 @@ class Lane:
         }
 
 
-def parse_campaigns(data: dict) -> list:
-    """`ViewerRewardDropInventory`-Antwort -> Lanes (nur WATCH-Gruppen)."""
+def parse_campaigns(data: dict, now: "datetime | None" = None) -> list:
+    """`ViewerRewardDropInventory`-Antwort -> Lanes (nur WATCH-Gruppen aktiver Kampagnen).
+
+    Twitch lässt abgelaufene Kampagnen (status EXPIRED, endAt vorbei) noch im
+    Inventar stehen; die fliegen hier raus, damit sie weder geplant noch angezeigt werden."""
+    now = now or datetime.now(timezone.utc)
     lanes = []
     inv = ((data or {}).get("currentUser") or {}).get("inventory") or {}
     for camp in inv.get("viewerRewardDropCampaignsInProgress") or []:
+        if (camp.get("status") or "").upper() == "EXPIRED":
+            continue
+        end = _parse_dt(camp.get("endAt"))
+        if end is not None and end <= now:
+            continue
         for g in camp.get("rewardGroups") or []:
             lane = _lane_from_group(camp, g)
             if lane is not None:
@@ -386,3 +402,18 @@ def watch_outcome(lane: Lane, start_minutes: int, started_at: datetime,
     if (now - started_at).total_seconds() >= max_minutes * 60:
         return "capped"
     return "continue"
+
+
+def pick_from_directory(edges: list, categories: set):
+    """Login des größten Live-Streams aus einer Verzeichnis-Antwort, dessen Kategorie zählt."""
+    best, best_v = None, -1
+    for e in edges or []:
+        n = (e or {}).get("node") or {}
+        game = n.get("game") or {}
+        login = (n.get("broadcaster") or {}).get("login")
+        if not login or str(game.get("id")) not in categories:
+            continue
+        v = int(n.get("viewersCount") or 0)
+        if v > best_v:
+            best, best_v = login, v
+    return best

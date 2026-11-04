@@ -279,3 +279,24 @@ def test_watch_outcome_capped_after_max_minutes():
                               last_progress_at=NOW - timedelta(minutes=2), now=NOW,
                               max_minutes=35, stall_minutes=8)
     assert out == "capped"
+
+
+# ---------------------------------------------------------------- expired campaigns / directory fallback
+
+def test_parse_campaigns_drops_expired_campaigns():
+    inv = _inventory([_group("HoB", "lane-hob")], campaign_id="old", end="2026-10-31T22:30:00Z")
+    inv["currentUser"]["inventory"]["viewerRewardDropCampaignsInProgress"][0]["status"] = "EXPIRED"
+    assert quest.parse_campaigns(inv, now=NOW) == []
+
+
+def test_pick_from_directory_takes_biggest_stream_in_category():
+    edges = [
+        {"node": {"viewersCount": 900, "language": "DE", "broadcaster": {"id": "1", "login": "small"},
+                  "game": {"id": "509658", "displayName": "Just Chatting"}}},
+        {"node": {"viewersCount": 5000, "language": "DE", "broadcaster": {"id": "2", "login": "big"},
+                  "game": {"id": "509658", "displayName": "Just Chatting"}}},
+        {"node": {"viewersCount": 9000, "language": "DE", "broadcaster": {"id": "3", "login": "wrongcat"},
+                  "game": {"id": "32399", "displayName": "Counter-Strike"}}},
+    ]
+    assert quest.pick_from_directory(edges, {"509658"}) == "big"
+    assert quest.pick_from_directory([], {"509658"}) is None
