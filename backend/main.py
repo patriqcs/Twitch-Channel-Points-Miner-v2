@@ -24,9 +24,10 @@ from backend.stream_gate import StreamGateMonitor
 from backend.heist_manager import heist_manager
 from backend.chat_redeem_manager import chat_redeem_manager
 from backend.web_redeem_manager import web_redeem_manager
+from backend.quest_manager import quest_manager
 from backend.routers import (
     accounts, chat_redeem, heist, internal, metrics, predictions, proxies,
-    public_redeem, redeem, settings, system, web_redeem, ws,
+    public_redeem, quest, redeem, settings, system, web_redeem, ws,
 )
 
 FRONTEND_DIR = Path(
@@ -180,6 +181,8 @@ async def lifespan(app: FastAPI):
         chat_redeem_manager.start()
     if config.WEBREDEEM_COORDINATOR_ENABLED:
         web_redeem_manager.start()
+    if config.QUEST_MANAGER_ENABLED:
+        quest_manager.start()
     # The stream-gate REPLACES the plain boot auto-start: it runs the accounts
     # only while a streamer is live (staggering them up/down). Fall back to the
     # unconditional auto-start only when the gate is disabled.
@@ -197,6 +200,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        if config.QUEST_MANAGER_ENABLED:
+            quest_manager.stop()
         if config.WEBREDEEM_COORDINATOR_ENABLED:
             web_redeem_manager.stop()
         if config.CHATREDEEM_COORDINATOR_ENABLED:
@@ -234,6 +239,7 @@ app.include_router(predictions.router)
 app.include_router(chat_redeem.router)
 app.include_router(web_redeem.router)
 app.include_router(public_redeem.router)
+app.include_router(quest.router)
 app.include_router(settings.router)
 app.include_router(system.router)
 app.include_router(metrics.router)

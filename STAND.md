@@ -1,3 +1,17 @@
+## Neu (2026-11-04, „Badges“-Tab: Pokémon-Reward-Drops für den Hauptaccount — implementiert, Tests grün)
+
+- Twitchs Pokémon-Chat-Badges laufen über das neue Reward-Drops-System (`DropsCampaign.rewardGroups`,
+  Track/Lane, 20 min × 3 Tage je Stufe), nicht über die alten `timeBasedDrops`. Recherche + Mechanik:
+  `PLAN-POKEMON-BADGES.md`.
+- `backend/quest.py` (Parsen/Planen/Kanalwahl/Payload, reine Logik, `tests/test_quest.py`),
+  `backend/quest_manager.py` (Thread: Fortschritt pollen, Lane per `SetProgressionTrackSelection` wechseln,
+  eigene Watch-Beacons für einen Live-Kanal aus dem Tarn-Pool in zählender Kategorie, Lane-Rotation,
+  Stall-Fallback, Pause bis Fensterablauf), `backend/routers/quest.py` (`/api/quest/config|status|select|refresh`).
+- UI: Tab „Badges“ mit Evolutionslinien (Badge-Bilder von Twitch), Tages-Punkte, Minutenbalken, manueller
+  Lane-Wahl, Einstellungen (Account, Reihenfolge, Kanal-Pool, Deckel) und Verlauf.
+- Default AUS (`QUEST_ENABLED` in den AppSettings); Thread-Flag `QUEST_MANAGER_ENABLED` (Env, Default an).
+- Tests lokal: `.venv/bin/python -m pytest tests` (pytest nur in der lokalen venv, nicht im Image).
+
 # STAND — Web-Redeem (Stand: 2026-07-04)
 
 ## Neu (2026-07-09, „Wetten"-Tab: All-in auf Kanalwetten — implementiert + lokal getestet)

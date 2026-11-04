@@ -217,6 +217,9 @@ CHATREDEEM_COORDINATOR_ENABLED = _bool_env("CHATREDEEM_COORDINATOR_ENABLED", Tru
 # by the DB setting WEBREDEEM_ENABLED (toggled from the UI); this env flag
 # disables the whole thread regardless.
 WEBREDEEM_COORDINATOR_ENABLED = _bool_env("WEBREDEEM_COORDINATOR_ENABLED", True)
+# Badge-Quests (Pokémon-Reward-Drops) für den Hauptaccount, backend/quest_manager.py.
+# Der Thread läuft immer; ob er etwas tut, steuert QUEST_ENABLED in den AppSettings (UI).
+QUEST_MANAGER_ENABLED = _bool_env("QUEST_MANAGER_ENABLED", True)
 
 
 # ---- Event retention ----

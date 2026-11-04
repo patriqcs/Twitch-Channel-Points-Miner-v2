@@ -10,6 +10,7 @@ import WebRedeem from "./pages/WebRedeem";
 import Heist from "./pages/Heist";
 import Predictions from "./pages/Predictions";
 import Settings from "./pages/Settings";
+import Quests from "./pages/Quests";
 import Logs from "./pages/Logs";
 
 export default function App() {
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="web-redeem" element={<WebRedeem />} />
         <Route path="heist" element={<Heist />} />
         <Route path="wetten" element={<Predictions />} />
+        <Route path="badges" element={<Quests />} />
         <Route path="logs" element={<Logs />} />
         <Route path="settings" element={<Settings />} />
       </Route>

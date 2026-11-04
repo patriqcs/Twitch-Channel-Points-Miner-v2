@@ -270,6 +270,76 @@ export interface CoverConfig {
   exclude: string;
 }
 
+export interface QuestConfig {
+  enabled: boolean;
+  account: string;
+  priority: string[];
+  priority_raw: string;
+  pool: string[];
+  pool_raw: string;
+  max_minutes: number;
+  stall_minutes: number;
+}
+
+export interface QuestLane {
+  group_id: string;
+  name: string;
+  name_de: string;
+  track: string;
+  lane: string;
+  campaign_id: string;
+  campaign_name: string;
+  campaign_end: string | null;
+  required_minutes: number;
+  repeat_times: number;
+  status: string;
+  minutes: number;
+  grants: number;
+  window_start: string | null;
+  window_end: string | null;
+  next_eligible: string | null;
+  preconditions_met: boolean;
+  earned: boolean;
+  done: boolean;
+  categories: string[];
+  category_names: string[];
+  thumbnail: string;
+  badge_set: string;
+  selected: boolean;
+  day_complete: boolean;
+  ready_at: string | null;
+  blocked_until: string | null;
+}
+
+export interface QuestBadge {
+  set_id: string;
+  title: string;
+  image: string;
+}
+
+export interface QuestStatus {
+  account: string;
+  user_id: string;
+  lanes: QuestLane[];
+  badges: QuestBadge[];
+  watch: {
+    lane: string;
+    lane_name: string;
+    lane_name_de: string;
+    channel: string;
+    game: string | null;
+    started_at: string;
+    start_minutes: number;
+    last_minutes: number;
+    beacons: number;
+    beacon_errors: number;
+  } | null;
+  decision: { action: string; reason: string; lane: string | null; resume_at: string | null } | null;
+  last_error: string;
+  last_refresh_age: number | null;
+  log: string[];
+}
+
 async function req<T>(url: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     headers: { "Content-Type": "application/json" },
@@ -410,6 +480,14 @@ export const api = {
       { method: "PUT", body: JSON.stringify(body) }
     ),
 
+  // badge quests (Pokémon reward drops for the main account)
+  getQuestConfig: () => req<QuestConfig>("/api/quest/config"),
+  putQuestConfig: (body: Partial<QuestConfig>) =>
+    req<QuestConfig>("/api/quest/config", { method: "PUT", body: JSON.stringify(body) }),
+  getQuestStatus: () => req<QuestStatus>("/api/quest/status"),
+  questRefresh: () => req<{ ok: boolean }>("/api/quest/refresh", { method: "POST" }),
+  questSelect: (lane: string) =>
+    req<{ ok: boolean }>("/api/quest/select", { method: "POST", body: JSON.stringify({ lane }) }),
   // heist (open heists with opener accounts, join them with joiner accounts)
   getHeistConfig: () => req<HeistConfig>("/api/heist/config"),
   putHeistConfig: (body: Partial<HeistConfig>) =>
