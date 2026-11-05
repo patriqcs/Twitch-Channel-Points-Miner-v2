@@ -84,6 +84,18 @@ def test_parse_campaigns_skips_non_watch_and_sub_groups():
     assert [l.name for l in lanes] == ["Pikachu"]
 
 
+def test_parse_campaigns_skips_groups_without_progression_track():
+    """Fremde Watch-Kampagnen (z. B. „WoW Grinder") haben weder track noch lane
+    und dürfen nicht als Lane auftauchen — sonst versucht der Planer, Twitch auf
+    eine leere Lane umzuschalten (INVALID_SELECTION)."""
+    foreign = _group("WoW Grinder", "", required=480)
+    foreign["track"] = None
+    foreign["lane"] = None
+    foreign["name"] = None
+    lanes = quest.parse_campaigns(_inventory([foreign, _group("Pikachu", "lane-p")]), now=NOW)
+    assert [l.name for l in lanes] == ["Pikachu"]
+
+
 def test_parse_campaigns_tolerates_missing_self():
     g = _group("Charizard", "lane-char")
     g["self"] = None

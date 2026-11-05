@@ -242,6 +242,11 @@ def _lane_from_group(camp: dict, g: dict):
         return None
     if not req.get("minutesWatched"):
         return None
+    # Nur Lanes eines Progression-Tracks (Pokémon). Fremde Watch-Kampagnen im
+    # Inventar (z. B. „WoW Grinder") haben weder track noch lane; die ließen
+    # den Planer sonst auf eine leere Lane umschalten -> INVALID_SELECTION.
+    if not g.get("track") or not g.get("lane"):
+        return None
     rc = pc.get("repeatableConfig") or {}
     me = g.get("self") or {}
     win = me.get("currentWindow") or {}

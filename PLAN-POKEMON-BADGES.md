@@ -108,8 +108,12 @@ vorhandenen Beacon vom Heim-IP wie bisher).
 
 ## 5. Weiterentwicklung
 
-- Dieselbe Mechanik deckt **alle** Reward-Drops ab (z. B. Streamer-Badges mit `minutesWatched` 240
-  wie „HoB Craft Attack" im Inventar) – Modul generisch halten („rewardGroups mit WATCH-Kriterium").
+- Dieselbe Mechanik könnte **alle** Reward-Drops abdecken (z. B. Streamer-Badges mit `minutesWatched` 240
+  wie „HoB Craft Attack" im Inventar). **Seit 2026-11-05 bewusst NICHT:** Watch-Gruppen ohne
+  `track`/`lane` (z. B. „WoW Grinder", 480 min) werden im Parser verworfen. Grund: sie gehören zu keinem
+  Progression-Track, der Planer wollte Twitch auf eine leere Lane umschalten → `INVALID_SELECTION` alle
+  30 min, sobald die Pokémon-Lanes im Tagesfenster-Cooldown waren. Fremde Kampagnen bräuchten einen
+  eigenen Pfad ohne Lane-Auswahl (und ohne Tagesfenster-Logik).
 - Neue Pokémon-Runden (Twitch kündigt regelmäßige Runden an) erscheinen automatisch im
   `viewerRewardDropCampaignsInProgress`, sobald ein Ball vorhanden ist; Bälle selbst setzen Sub/Gift voraus (`requirements.subs`).
 - Für Alt-Accounts bewusst nicht: zusätzlicher Traffic ohne Nutzen, und Sub-gebundene Bälle entfallen ohnehin.
