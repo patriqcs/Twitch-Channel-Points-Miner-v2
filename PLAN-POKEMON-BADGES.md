@@ -78,6 +78,10 @@ zählt Twitch das nicht, greift der Stall-Fallback (8 min ohne Fortschritt → L
 Sind alle Lanes für heute voll, pausiert das Modul bis zum frühesten Fensterablauf.
 **Live bestätigt 2026-11-04:** Glutexo 3/3 → Glurak freigeschaltet und gezählt; Glurak Tag 1 voll → Wechsel auf
 Pikachu, zählt sofort weiter. Rotation funktioniert, Twitch akzeptiert mehrere Lanes am selben Tag.
+**Live bestätigt 2026-11-05:** Nach dem Parser-Fix (0fdaa18, fremde Kampagnen ohne track/lane raus) wartet
+der Planer im Tagesfenster-Cooldown sauber (kein INVALID_SELECTION mehr) und wechselt exakt zum Fensterende
+(20:27) auf Pikachu Tag 2/3; Minuten zählen sofort. Stand: Charmeleon 3/3 fertig, Charizard/Pikachu/Wartortle/
+Ivysaur je Tag 1/3 voll, Glutexo-Linie abgeschlossen.
 
 Ursprünglicher Vorschlag:
 
