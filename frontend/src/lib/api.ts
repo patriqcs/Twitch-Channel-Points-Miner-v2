@@ -330,6 +330,7 @@ export interface QuestCampaign {
   groups: { name: string; minutes: number; repeat: number; thumbnail: string; categories: string[]; category_count: number }[];
   in_inventory: boolean;
   state: "on" | "off" | "new";
+  complete: boolean;
   auto: boolean;
 }
 

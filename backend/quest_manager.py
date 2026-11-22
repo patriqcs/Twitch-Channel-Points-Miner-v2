@@ -621,11 +621,14 @@ class QuestManager(threading.Thread):
                 lanes.append(d)
             listed = {c["id"] for c in self.discovered}
             campaigns = []
+            owned = {b.get("set_id") for b in self.badges}
             for c in self.discovered:
                 e = {k: v for k, v in c.items() if k != "raw"}
                 e["in_inventory"] = c["id"] in self._inventory_ids
                 e["state"] = quest.campaign_state(c["id"], c["auto_key"],
                                                   e["in_inventory"], self._cfg)
+                # Fertige Kampagnen fallen aus dem Inventar und sähen sonst wie neu aus.
+                e["complete"] = bool(c["badge_sets"]) and set(c["badge_sets"]) <= owned
                 e["auto"] = bool(c["auto_key"]) and c["auto_key"] in (self._cfg.get("auto_keys") or [])
                 campaigns.append(e)
             # Begonnene Kampagnen, die die Liste nicht (mehr) führt, bleiben schaltbar.
@@ -638,7 +641,7 @@ class QuestManager(threading.Thread):
                     "image": "", "start": None,
                     "end": l.campaign_end.isoformat() if l.campaign_end else None,
                     "upcoming": False, "auto_key": "", "auto_label": "", "groups": [],
-                    "in_inventory": True, "auto": False,
+                    "in_inventory": True, "auto": False, "complete": False, "badge_sets": [],
                     "state": quest.campaign_state(l.campaign_id, "", True, self._cfg),
                 })
             return {

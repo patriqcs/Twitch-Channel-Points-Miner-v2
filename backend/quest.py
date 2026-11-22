@@ -328,10 +328,16 @@ def _seedable(camp: dict, g: dict, now: datetime) -> bool:
     start = _parse_dt(camp.get("startAt"))
     if start is not None and start > now:
         return False
+    return _startable(g)
+
+
+def _startable(g: dict) -> bool:
+    """Kann das Modul diese Gruppe von sich aus beginnen?"""
     if not _twitch_reward(g):
         return False
-    # Tracklose Gruppen ohne Auto-Fortschritt sind Abschluss-Belohnungen mit
-    # Vorbedingung (Golden Iguana); die Liste zeigt die Vorbedingung nicht ehrlich an.
+    # Ohne Lane und ohne Auto-Fortschritt: Abschluss-Belohnung mit Vorbedingung
+    # (Golden Iguana) oder Auswahl-Kampagne ohne Lane (Pokémon Night Out) -- die
+    # Liste zeigt die Vorbedingung nicht ehrlich an, und wählen können wir dort nichts.
     pc = g.get("progressCriteria") or {}
     if (not g.get("track") or not g.get("lane")) and not pc.get("isAutoProgressable"):
         return False
@@ -384,12 +390,14 @@ def parse_discovery(data: dict, now: "datetime | None" = None) -> list:
         if end is not None and end <= now:
             continue
         groups = []
+        badge_sets = set()
         for g in camp.get("rewardGroups") or []:
-            if not _twitch_reward(g):
+            if not _startable(g):
                 continue
             lane = _lane_from_group(camp, g)
             if lane is None:
                 continue
+            badge_sets |= {p.get("badge_set") for p in lane.pool} | {lane.badge_set}
             groups.append({
                 "name": lane.name, "minutes": lane.required_minutes,
                 "repeat": lane.repeat_times, "thumbnail": lane.thumbnail,
@@ -409,7 +417,7 @@ def parse_discovery(data: dict, now: "datetime | None" = None) -> list:
             "end": end.isoformat() if end else None,
             "upcoming": bool(start and start > now),
             "auto_key": key, "auto_label": label,
-            "groups": groups, "raw": camp,
+            "groups": groups, "badge_sets": sorted(badge_sets - {""}), "raw": camp,
         })
     out.sort(key=lambda c: c["end"] or "9999")
     return out

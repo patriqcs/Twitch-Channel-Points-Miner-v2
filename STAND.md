@@ -36,6 +36,9 @@
   - Freigegebene, noch nicht begonnene Kampagnen werden als „Seed“-Lanes angestoßen, bis Twitch sie im
     Inventar führt. Nicht angestoßen: künftige, Spielgegenstände, tracklose Gruppen ohne Auto-Fortschritt
     (Abschluss-Belohnungen), Kampagnen, deren Abzeichen schon alle im Besitz sind.
+  - Live 22.11.: gelistet GTA VI (an), Payday 3, OSRS, Pokémon Evolutions (alle „neu“). Pokémon Night Out
+    (Gastly) fehlt bewusst: Track ohne Lane, nicht anstoßbar, endet 23.11. Dem Account fehlen deshalb
+    Nebulak/Alpollo/Gengar; fertige Kampagnen fallen aus dem Inventar (Pokémon Evolutions steht nicht mehr drin).
   - Ungeprüft: ein echter Anstoß einer fremden Kampagne (noch keine freigegeben).
 
 ## Neu (2026-11-04, „Badges“-Tab: Pokémon-Reward-Drops für den Hauptaccount — implementiert, Tests grün)
