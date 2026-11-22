@@ -1,4 +1,4 @@
-## Neu (2026-11-22, „Badges“-Tab farmt auch GTA VI — Kampagnen ohne Lane; ausgerollt + eingeschaltet 22.11. 15:28)
+## Neu (2026-11-22, „Badges“-Tab farmt auch GTA VI — Kampagnen ohne Lane; dazu Kampagnen-Erkennung mit Freigabe; beides ausgerollt 22.11.)
 
 - Auslöser: „GTAVI Launch Celebration“ (Kampagne `b7669f9e-c69c-4a9b-a3b2-36266c1bdfc0`, 18.11.–01.12.2026
   07:59 UTC). Reward-Gruppe „GTA DVD Drops“: WATCH 60 min je rollierendem 24-h-Fenster, 6 Wiederholungen,
