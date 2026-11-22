@@ -573,3 +573,14 @@ def test_parse_campaigns_does_not_seed_upcoming_items_or_locked_final_rewards():
         _listed("camp-final", "Final", [final]),
     ])
     assert lanes == []
+
+
+def test_parse_discovery_lists_unstartable_badge_campaigns_as_manual():
+    final = _gta_group()
+    final["progressCriteria"]["isAutoProgressable"] = False
+    found = quest.parse_discovery({"dropsCampaigns": [
+        _listed("camp-odd", "Unbekannte Form", [final]),
+        _listed("camp-gta", "GTAVI Launch Celebration", [_gta_group()])]}, now=NOW)
+    by = {c["id"]: c for c in found}
+    assert by["camp-odd"]["startable"] is False and len(by["camp-odd"]["groups"]) == 1
+    assert by["camp-gta"]["startable"] is True

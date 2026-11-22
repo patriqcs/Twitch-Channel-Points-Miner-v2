@@ -642,6 +642,7 @@ class QuestManager(threading.Thread):
                     "end": l.campaign_end.isoformat() if l.campaign_end else None,
                     "upcoming": False, "auto_key": "", "auto_label": "", "groups": [],
                     "in_inventory": True, "auto": False, "complete": False, "badge_sets": [],
+                    "startable": True,
                     "state": quest.campaign_state(l.campaign_id, "", True, self._cfg),
                 })
             return {

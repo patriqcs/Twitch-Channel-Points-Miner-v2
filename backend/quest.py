@@ -390,20 +390,26 @@ def parse_discovery(data: dict, now: "datetime | None" = None) -> list:
         if end is not None and end <= now:
             continue
         groups = []
+        manual = []     # Schau-Gruppen, die das Modul nicht selbst beginnen kann
         badge_sets = set()
         for g in camp.get("rewardGroups") or []:
-            if not _startable(g):
+            if not _twitch_reward(g):
                 continue
             lane = _lane_from_group(camp, g)
             if lane is None:
                 continue
             badge_sets |= {p.get("badge_set") for p in lane.pool} | {lane.badge_set}
-            groups.append({
+            (groups if _startable(g) else manual).append({
                 "name": lane.name, "minutes": lane.required_minutes,
                 "repeat": lane.repeat_times, "thumbnail": lane.thumbnail,
                 "categories": lane.category_names[:3],
                 "category_count": len(lane.category_names),
             })
+        # Kampagnen in unbekannter Form nicht verschweigen: ohne anstoßbare Gruppe
+        # werden sie als „von Hand beginnen" gelistet statt weggefiltert.
+        startable = bool(groups)
+        if not groups:
+            groups = manual
         if not groups:
             continue
         key, label = campaign_auto_key(camp)
@@ -417,7 +423,7 @@ def parse_discovery(data: dict, now: "datetime | None" = None) -> list:
             "end": end.isoformat() if end else None,
             "upcoming": bool(start and start > now),
             "auto_key": key, "auto_label": label,
-            "groups": groups, "badge_sets": sorted(badge_sets - {""}), "raw": camp,
+            "groups": groups, "startable": startable, "badge_sets": sorted(badge_sets - {""}), "raw": camp,
         })
     out.sort(key=lambda c: c["end"] or "9999")
     return out

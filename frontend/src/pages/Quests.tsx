@@ -62,7 +62,7 @@ function CampaignList({
   onToggle: (c: QuestCampaign, enabled: boolean) => void;
   onAuto: (c: QuestCampaign, enabled: boolean) => void;
 }) {
-  const fresh = campaigns.filter((c) => c.state === "new" && !c.complete).length;
+  const fresh = campaigns.filter((c) => c.state === "new" && !c.complete && c.startable).length;
   return (
     <Card>
       <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
@@ -88,7 +88,7 @@ function CampaignList({
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{c.name}</span>
                   {c.complete && <span className="rounded bg-emerald-500/15 px-1.5 text-[11px] text-emerald-300">alle Abzeichen im Besitz</span>}
-                  {c.state === "new" && !c.complete && <span className="rounded bg-amber-500/15 px-1.5 text-[11px] text-amber-300">neu</span>}
+                  {c.state === "new" && !c.complete && c.startable && <span className="rounded bg-amber-500/15 px-1.5 text-[11px] text-amber-300">neu</span>}
                   {c.upcoming && <span className="rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400">startet {fmtTime(c.start)}</span>}
                   {c.state === "on" && !c.in_inventory && !c.upcoming && !c.complete && (
                     <span className="rounded bg-sky-500/15 px-1.5 text-[11px] text-sky-300">wird begonnen</span>
@@ -98,13 +98,18 @@ function CampaignList({
                   {where && `${where} · `}endet {fmtTime(c.end)}
                 </div>
                 {c.groups.length > 0 && <div className="text-xs text-zinc-500">{groupSummary(c)}</div>}
+                {!c.startable && !c.in_inventory && (
+                  <div className="text-xs text-amber-300">
+                    Kann das Modul nicht selbst beginnen. Einmal bei Twitch von Hand starten, danach übernimmt es.
+                  </div>
+                )}
               </div>
               <div className="flex shrink-0 flex-col items-start gap-1 text-sm">
-                <label className={cn("flex min-h-6 items-center gap-2", c.complete && "invisible")}>
+                <label className={cn("flex min-h-6 items-center gap-2", (c.complete || (!c.startable && !c.in_inventory)) && "invisible")}>
                   <input type="checkbox" checked={c.state === "on"} onChange={(e) => onToggle(c, e.target.checked)} />
                   farmen
                 </label>
-                {c.auto_key && (
+                {c.auto_key && c.startable && (
                   <label className="flex min-h-6 items-center gap-2 text-xs text-zinc-400">
                     <input type="checkbox" checked={c.auto} onChange={(e) => onAuto(c, e.target.checked)} />
                     {c.auto_label} immer

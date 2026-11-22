@@ -331,6 +331,7 @@ export interface QuestCampaign {
   in_inventory: boolean;
   state: "on" | "off" | "new";
   complete: boolean;
+  startable: boolean;
   auto: boolean;
 }
 
