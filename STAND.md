@@ -1,4 +1,4 @@
-## Neu (2026-11-22, „Badges“-Tab farmt auch GTA VI — Kampagnen ohne Lane; Code fertig, noch NICHT ausgerollt)
+## Neu (2026-11-22, „Badges“-Tab farmt auch GTA VI — Kampagnen ohne Lane; ausgerollt + eingeschaltet 22.11. 15:28)
 
 - Auslöser: „GTAVI Launch Celebration“ (Kampagne `b7669f9e-c69c-4a9b-a3b2-36266c1bdfc0`, 18.11.–01.12.2026
   07:59 UTC). Reward-Gruppe „GTA DVD Drops“: WATCH 60 min je rollierendem 24-h-Fenster, 6 Wiederholungen,
@@ -20,8 +20,13 @@
 - Stand patriQcs am 22.11.: 2/6 Tage (von Hand geschaut), alle 6 Sub-Belohnungen vorhanden; heutiges
   Fenster voll bis 23.11. 12:04 UTC. Es fehlen 4 Tage → fertig ca. 26.11.
 - UI: Kampagnen-Karte (Tage, Minuten, Pool-Badges mit Besitz), Mobile-Nav läuft nicht mehr aus der Seite.
-- Offen: commit + push master, Container auf Unraid neu erstellen, Modul einschalten (`QUEST_ENABLED`),
-  am 23.11. ab 13:04 im Verlauf prüfen, dass die Minuten zählen.
+- Ausgerollt 22.11.: Commit 4948fd5, Container per `update_container` neu erstellt, `QUEST_ENABLED=1`.
+  Status live: GTA DVD Drops 2/6, Pause bis 23.11. 12:04 UTC.
+- Offen: am 23.11. ab 13:04 im Verlauf prüfen, dass die GTA-Minuten zählen (heute nicht prüfbar, Tag war voll).
+- Idee (nicht gebaut): neue Kampagnen selbst entdecken. Das Inventar zeigt nur begonnene Kampagnen;
+  alle laufenden liefert `query NewAllCampaignsPage { dropsCampaigns(includeUpcoming: true) { id name
+  brandName status startAt endAt game { id displayName } rewardGroups { id progressCriteria { categories
+  { id } } rewards { id name thumbnailURL } } } }`.
 
 ## Neu (2026-11-04, „Badges“-Tab: Pokémon-Reward-Drops für den Hauptaccount — implementiert, Tests grün)
 
