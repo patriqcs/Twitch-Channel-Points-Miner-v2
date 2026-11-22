@@ -1,3 +1,28 @@
+## Neu (2026-11-22, „Badges“-Tab farmt auch GTA VI — Kampagnen ohne Lane; Code fertig, noch NICHT ausgerollt)
+
+- Auslöser: „GTAVI Launch Celebration“ (Kampagne `b7669f9e-c69c-4a9b-a3b2-36266c1bdfc0`, 18.11.–01.12.2026
+  07:59 UTC). Reward-Gruppe „GTA DVD Drops“: WATCH 60 min je rollierendem 24-h-Fenster, 6 Wiederholungen,
+  Kategorie Grand Theft Auto VI (ID 1867279146), **kein track/lane**, `isAutoProgressable: true`,
+  `shouldCompleteAllRepeatsToEarn: false` → jeder volle Tag bringt sofort ein Ketten-Badge aus dem Pool
+  (purple/bronze/silver/gold/diamond/miami-chain).
+- **Kein Abholen nötig** (geprüft am Account: grantCount 2 ↔ bronze-chain + purple-chain in `availableBadges`).
+  `claimDropRewards` braucht die Seite nur für DIRECT_ENTITLEMENT, `selectDropsRewardOption` nur für
+  CODE-Belohnungen (die verlosten Spielcodes; die farmt das Modul nicht).
+- Umbau: `quest.py` nimmt tracklose WATCH-Gruppen an, wenn sie an Kategorien hängen (kanalgebundene
+  Streamer-Badges bleiben draußen). `Lane.key` (Lane-ID, tracklos Gruppen-ID) für Sperren/Stall-Zähler,
+  Planer: früheste Kampagnenfrist zuerst, tracklos nie `SetProgressionTrackSelection`. Deckel skaliert
+  („fehlende Minuten + 15“, sonst hätte der 35-min-Deckel die 60-min-Tage abgebrochen). Fenster-Neustart
+  (Zähler springt zurück) gilt nicht mehr als Stillstand.
+- „Ultimate Reward“ (Golden Iguana: alle 6 Ketten + die 6 Sub-Belohnungen) steht nur in
+  `DropChannelCampaignsProgress`, nicht im Inventar; wird vom zuletzt geschauten Kanal dazugeholt und
+  bleibt „gesperrt“, bis Twitch `hasPreconditionsMet` meldet. **Ungeprüft**, ob dafür nach den 6 Ketten
+  noch einmal 60 min nötig sind oder Twitch sie direkt vergibt — das Modul schaut sie, sobald sie offen ist.
+- Stand patriQcs am 22.11.: 2/6 Tage (von Hand geschaut), alle 6 Sub-Belohnungen vorhanden; heutiges
+  Fenster voll bis 23.11. 12:04 UTC. Es fehlen 4 Tage → fertig ca. 26.11.
+- UI: Kampagnen-Karte (Tage, Minuten, Pool-Badges mit Besitz), Mobile-Nav läuft nicht mehr aus der Seite.
+- Offen: commit + push master, Container auf Unraid neu erstellen, Modul einschalten (`QUEST_ENABLED`),
+  am 23.11. ab 13:04 im Verlauf prüfen, dass die Minuten zählen.
+
 ## Neu (2026-11-04, „Badges“-Tab: Pokémon-Reward-Drops für den Hauptaccount — implementiert, Tests grün)
 
 - Twitchs Pokémon-Chat-Badges laufen über das neue Reward-Drops-System (`DropsCampaign.rewardGroups`,

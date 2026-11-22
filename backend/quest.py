@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Badge-Quests (Twitch Reward-Drops, z. B. Pokémon-Chat-Badges) — Logik.
+"""Badge-Quests (Twitch Reward-Drops: Pokémon-Chat-Badges, GTA-VI-Ketten, …) — Logik.
 
 Twitch zählt diese Badges NICHT über die klassischen `DropCampaign`/
 `timeBasedDrops`, sondern über `DropsCampaign.rewardGroups` mit Tageszähler:
@@ -9,6 +9,13 @@ für die im Track ausgewählte Lane (`isAutoProgressable: false`). Jede Lane
 der Tag einer Lane voll, wird per `SetProgressionTrackSelection` die nächste
 Lane ausgewählt und weitergeschaut. Sind alle Lanes für heute voll, wird
 pausiert, bis das früheste Fenster abläuft.
+
+Daneben gibt es Kampagnen OHNE Track/Lane (z. B. „GTAVI Launch Celebration":
+60 Minuten pro 24-h-Fenster in der Kategorie GTA VI, an 6 Tagen, jede volle
+Stunde bringt sofort ein Ketten-Badge, `isAutoProgressable: true`). Die zählen
+ohne Lane-Auswahl; hier heißen sie „tracklos" und werden nur geschaut, nie
+umgeschaltet. Gutschrift der Badges macht Twitch selbst (kein Abholen nötig,
+geprüft 2026-11-22).
 
 Dieses Modul enthält nur reine Logik (Parsen, Planen, Kanalwahl, Payload) und
 die GQL-Texte. Netz, Thread und Zustand liegen in quest_manager.py.
@@ -195,6 +202,16 @@ class Lane:
     category_names: list = field(default_factory=list)
     thumbnail: str = ""
     badge_set: str = ""
+    pool: list = field(default_factory=list)   # [{name, thumbnail, badge_set}] bei Truhen
+
+    @property
+    def key(self) -> str:
+        """Eindeutiger Schlüssel für Sperren/Zähler: Lane-ID, tracklos die Gruppen-ID."""
+        return self.lane or self.group_id
+
+    @property
+    def trackless(self) -> bool:
+        return not (self.track and self.lane)
 
     def to_dict(self) -> dict:
         iso = lambda d: d.isoformat() if d else None  # noqa: E731
@@ -210,27 +227,44 @@ class Lane:
             "preconditions_met": self.preconditions_met, "earned": self.earned,
             "done": lane_done(self), "categories": sorted(self.categories),
             "category_names": self.category_names, "thumbnail": self.thumbnail,
-            "badge_set": self.badge_set,
+            "badge_set": self.badge_set, "key": self.key,
+            "trackless": self.trackless, "pool": list(self.pool),
         }
 
 
-def parse_campaigns(data: dict, now: "datetime | None" = None) -> list:
+def parse_campaigns(data: dict, now: "datetime | None" = None,
+                    extra: "list | None" = None) -> list:
     """`ViewerRewardDropInventory`-Antwort -> Lanes (nur WATCH-Gruppen aktiver Kampagnen).
 
     Twitch lässt abgelaufene Kampagnen (status EXPIRED, endAt vorbei) noch im
-    Inventar stehen; die fliegen hier raus, damit sie weder geplant noch angezeigt werden."""
+    Inventar stehen; die fliegen hier raus, damit sie weder geplant noch angezeigt werden.
+
+    extra: Kampagnen aus `DropChannelCampaignsProgress` eines Kanals. Das Inventar
+    zeigt nur begonnene Gruppen; Abschluss-Belohnungen (z. B. „Ultimate Reward" =
+    Golden Iguana) stehen nur dort. Übernommen werden daraus nur zusätzliche
+    Gruppen von Kampagnen, die schon im Inventar sind."""
     now = now or datetime.now(timezone.utc)
     lanes = []
+    seen_groups = set()
+    known_campaigns = set()
     inv = ((data or {}).get("currentUser") or {}).get("inventory") or {}
-    for camp in inv.get("viewerRewardDropCampaignsInProgress") or []:
+    sources = [(c, False) for c in inv.get("viewerRewardDropCampaignsInProgress") or []]
+    sources += [(c, True) for c in extra or []]
+    for camp, is_extra in sources:
         if (camp.get("status") or "").upper() == "EXPIRED":
             continue
         end = _parse_dt(camp.get("endAt"))
         if end is not None and end <= now:
             continue
+        if is_extra and camp.get("id") not in known_campaigns:
+            continue
         for g in camp.get("rewardGroups") or []:
+            if g.get("id") in seen_groups:
+                continue
             lane = _lane_from_group(camp, g)
             if lane is not None:
+                seen_groups.add(g.get("id"))
+                known_campaigns.add(camp.get("id"))
                 lanes.append(lane)
     return lanes
 
@@ -242,10 +276,11 @@ def _lane_from_group(camp: dict, g: dict):
         return None
     if not req.get("minutesWatched"):
         return None
-    # Nur Lanes eines Progression-Tracks (Pokémon). Fremde Watch-Kampagnen im
-    # Inventar (z. B. „WoW Grinder") haben weder track noch lane; die ließen
-    # den Planer sonst auf eine leere Lane umschalten -> INVALID_SELECTION.
-    if not g.get("track") or not g.get("lane"):
+    # Gruppen ohne Progression-Track (tracklos) zählen nur, wenn sie an
+    # Kategorien hängen (GTA VI). Kanalgebundene Streamer-Badges („WoW Grinder",
+    # categories leer, channels gesetzt) bleiben draußen: für die gibt es keine
+    # Kanalwahl, und der eigene Miner schaut diese Kanäle ohnehin nicht.
+    if (not g.get("track") or not g.get("lane")) and not pc.get("categories"):
         return None
     rc = pc.get("repeatableConfig") or {}
     me = g.get("self") or {}
@@ -253,11 +288,18 @@ def _lane_from_group(camp: dict, g: dict):
     rewards = g.get("rewards") or []
     thumb = ""
     badge_set = ""
+    pool = []
     for r in rewards:
         thumb = thumb or (r.get("thumbnailURL") or "")
         badge_set = badge_set or (((r.get("dropDetail") or {}).get("badge") or {}).get("setID") or "")
+        for pr in ((r.get("pool") or {}).get("rewards") or []):
+            pool.append({
+                "name": pr.get("name") or "", "thumbnail": pr.get("thumbnailURL") or "",
+                "badge_set": ((pr.get("dropDetail") or {}).get("badge") or {}).get("setID") or "",
+            })
     return Lane(
-        group_id=g.get("id") or "", name=g.get("name") or "",
+        group_id=g.get("id") or "",
+        name=g.get("name") or (rewards[0].get("name") if rewards else "") or camp.get("name") or "",
         track=g.get("track") or "", lane=g.get("lane") or "",
         campaign_id=camp.get("id") or "", campaign_name=camp.get("name") or "",
         campaign_end=_parse_dt(camp.get("endAt")),
@@ -275,7 +317,7 @@ def _lane_from_group(camp: dict, g: dict):
         categories={str(c.get("id")) for c in (pc.get("categories") or []) if c.get("id")},
         category_names=[c.get("displayName") for c in (pc.get("categories") or [])
                         if c.get("displayName")],
-        thumbnail=thumb, badge_set=badge_set,
+        thumbnail=thumb, badge_set=badge_set, pool=pool,
     )
 
 
@@ -335,7 +377,7 @@ def plan(lanes: list, selected_lane, now: datetime, priority: list,
         r = ready_at(lane, now)
         if r is None:
             continue
-        until = blocked.get(lane.lane)
+        until = blocked.get(lane.key)
         if until is not None and until > now:
             r = max(r, until)
         if r <= now:
@@ -347,6 +389,11 @@ def plan(lanes: list, selected_lane, now: datetime, priority: list,
     if not open_lanes:
         return Decision("idle", resume_at=min(waits),
                         reason="alle Lanes für heute voll")
+    # Die Kampagne mit der frühesten Frist geht vor (GTA VI endet vor Pokémon);
+    # innerhalb einer Kampagne gilt die bisherige Reihenfolge.
+    far = datetime.max.replace(tzinfo=timezone.utc)
+    soonest = min((l.campaign_end or far) for l in open_lanes)
+    open_lanes = [l for l in open_lanes if (l.campaign_end or far) == soonest]
     # Angefangene (ausgewählte) Lane nicht wechseln, solange sie heute noch zählt.
     for lane in open_lanes:
         if selected_lane and lane.lane == selected_lane:
@@ -355,6 +402,9 @@ def plan(lanes: list, selected_lane, now: datetime, priority: list,
     # Sonst: Priorität, dann die mit den meisten Tagen, dann mit den meisten Minuten.
     best = sorted(open_lanes, key=lambda l: (_priority_rank(l, priority),
                                              -l.grants, -l.minutes, l.name))[0]
+    if best.trackless:
+        return Decision("watch", lane=best, switch=False,
+                        reason="Kampagne ohne Lane-Auswahl braucht heute noch Minuten")
     return Decision("watch", lane=best, switch=(best.lane != selected_lane),
                     reason="nächste Lane nach Priorität/Fortschritt")
 
@@ -404,11 +454,15 @@ def watch_outcome(lane: Lane, start_minutes: int, started_at: datetime,
     stalled   -> seit `stall_minutes` kein Minuten-Fortschritt (Twitch zählt nicht)
     capped    -> länger als `max_minutes` dran -> Notbremse
     continue  -> weiterschauen
+
+    Der Deckel ist auf 20-Minuten-Tage ausgelegt; braucht eine Lane mehr
+    (GTA VI: 60), gilt mindestens „fehlende Minuten + 15".
     """
     if day_complete(lane, now):
         return "day_done"
     if (now - last_progress_at).total_seconds() >= stall_minutes * 60:
         return "stalled"
+    max_minutes = max(max_minutes, lane.required_minutes - start_minutes + 15)
     if (now - started_at).total_seconds() >= max_minutes * 60:
         return "capped"
     return "continue"

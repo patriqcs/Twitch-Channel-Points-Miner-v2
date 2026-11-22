@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Badge-Quest-Manager: farmt Twitch Reward-Drops (Pokémon-Badges) für EINEN
-Account (Default: der Hauptaccount), ohne dessen laufenden Miner anzufassen.
+"""Badge-Quest-Manager: farmt Twitch Reward-Drops (Pokémon-Badges, GTA-VI-Ketten)
+für EINEN Account (Default: der Hauptaccount), ohne dessen laufenden Miner anzufassen.
+Kampagnen ohne Lane (GTA VI) laufen denselben Weg, nur ohne Lane-Wechsel.
 
 Ablauf (Thread, Tick alle paar Sekunden, Aktionen zeitgesteuert):
   1. Fortschritt holen (`ViewerRewardDropInventory`) + gewählte Lane je Track.
@@ -73,6 +74,7 @@ class QuestManager(threading.Thread):
         self._device_id: str = ""
         self._bad_channels: dict = {}   # login -> datetime: hat zuletzt nicht gezählt
         self._lane_stalls: dict = {}    # lane -> Anzahl Stalls heute
+        self._ref_channel_id: str = ""  # zuletzt geschauter Kanal (für Kanal-Fortschritt)
         self.log: deque = deque(maxlen=60)
         self._last_nochannel_log = 0.0
         self._last_dir_lookup = 0.0
@@ -169,6 +171,13 @@ class QuestManager(threading.Thread):
                 if lane.minutes > self.watch["last_minutes"]:
                     self.watch["last_minutes"] = lane.minutes
                     self.watch["last_progress_at"] = now
+                elif lane.minutes < self.watch["last_minutes"]:
+                    # Neues Tagesfenster: Twitch hat den Zähler zurückgesetzt. Ohne das
+                    # sähe eine Sitzung, die mit dem alten Stand (z. B. 60/60) gestartet
+                    # ist, wie Stillstand aus.
+                    self.watch["last_minutes"] = lane.minutes
+                    self.watch["start_minutes"] = min(self.watch["start_minutes"], lane.minutes)
+                    self.watch["last_progress_at"] = now
                 outcome = quest.watch_outcome(
                     lane, self.watch["start_minutes"], self.watch["started_at"],
                     self.watch["last_progress_at"], now,
@@ -178,15 +187,15 @@ class QuestManager(threading.Thread):
                 if lane.grants > self.watch["start_grants"] or quest.lane_done(lane):
                     outcome = "day_done"
                 if outcome == "day_done":
-                    self._lane_stalls.pop(lane.lane, None)
+                    self._lane_stalls.pop(lane.key, None)
                     self._log(f"{quest.german_name(lane.name)}: Tag {lane.grants}/{lane.repeat_times} voll "
                               f"({lane.minutes}/{lane.required_minutes} min)", event=True)
                     self._stop_watch("Tagesziel erreicht")
                     self.last_refresh = 0.0
                 elif outcome in ("stalled", "capped"):
                     ch = self.watch["channel"]
-                    n = self._lane_stalls.get(lane.lane, 0) + 1
-                    self._lane_stalls[lane.lane] = n
+                    n = self._lane_stalls.get(lane.key, 0) + 1
+                    self._lane_stalls[lane.key] = n
                     # Erst den Kanal wechseln (vielleicht zählt nur dieser nicht),
                     # erst beim zweiten Fehlschlag die Lane für heute pausieren.
                     self._bad_channels[ch] = now + timedelta(hours=BLOCK_FALLBACK_HOURS)
@@ -196,7 +205,7 @@ class QuestManager(threading.Thread):
                         self._stop_watch(outcome)
                     else:
                         until = lane.window_end or (now + timedelta(hours=BLOCK_FALLBACK_HOURS))
-                        self.blocked[lane.lane] = until
+                        self.blocked[lane.key] = until
                         self._log(f"{quest.german_name(lane.name)}: kein Fortschritt auch auf {ch} ({outcome}, "
                                   f"{lane.minutes} min) -> Lane bis {until.astimezone().strftime('%d.%m. %H:%M')} pausiert",
                                   event=True)
@@ -227,7 +236,18 @@ class QuestManager(threading.Thread):
     def _refresh(self, token, proxies, fp):
         data = self._gql(token, proxies, fp, "ViewerRewardDropInventory",
                          quest.GQL_INVENTORY)
-        lanes = quest.parse_campaigns(data, now=_now())
+        # Abschluss-Belohnungen (Golden Iguana) stehen nur im Kanal-Fortschritt,
+        # nicht im Inventar -> vom zuletzt geschauten Kanal dazuholen.
+        extra = None
+        if self._ref_channel_id:
+            try:
+                cp = self._gql(token, proxies, fp, "DropChannelCampaignsProgress",
+                               quest.GQL_CHANNEL_PROGRESS,
+                               {"channelID": self._ref_channel_id})
+                extra = cp.get("channelDropCampaignsProgress") or None
+            except Exception as e:  # noqa: BLE001
+                logger.debug("channel progress failed: %s", e)
+        lanes = quest.parse_campaigns(data, now=_now(), extra=extra)
         self.user_id = str(((data.get("currentUser") or {}).get("id")) or self.user_id)
         tracks = sorted({l.track for l in lanes if l.track})
         selected = {}
@@ -294,13 +314,13 @@ class QuestManager(threading.Thread):
         except Exception as e:  # noqa: BLE001
             self.last_error = f"Lane-Wechsel fehlgeschlagen: {e}"
             self._log(self.last_error, event=True)
-            self.blocked[lane.lane] = _now() + timedelta(minutes=30)
+            self.blocked[lane.key] = _now() + timedelta(minutes=30)
             return False
         err = (res.get("setTrackSelection") or {}).get("error")
         if err:
             self.last_error = f"Lane-Wechsel abgelehnt: {err}"
             self._log(self.last_error, event=True)
-            self.blocked[lane.lane] = _now() + timedelta(minutes=30)
+            self.blocked[lane.key] = _now() + timedelta(minutes=30)
             return False
         with self._lock:
             self.selected[lane.track] = lane.lane
@@ -310,12 +330,12 @@ class QuestManager(threading.Thread):
     def select_lane_manual(self, lane_id: str) -> dict:
         """UI: Lane von Hand wählen (laufende Sitzung wird beendet)."""
         lane = self._lane_by_id(lane_id)
-        if lane is None:
+        if lane is None or lane.trackless:
             return {"ok": False, "error": "unbekannte Lane"}
         token, proxies, fp, _ = self._creds(self._username or quest.DEFAULT_ACCOUNT)
         ok = self._select_lane(token, proxies, fp, lane)
         if ok:
-            self.blocked.pop(lane.lane, None)
+            self.blocked.pop(lane.key, None)
             self._stop_watch("manueller Lane-Wechsel")
             self.poke()
         return {"ok": ok, "error": None if ok else self.last_error}
@@ -366,18 +386,24 @@ class QuestManager(threading.Thread):
         if not info or not info["live"]:
             return
         now = _now()
+        # Minutenstand zählt nur, solange das Fenster noch offen ist; ein
+        # abgelaufenes Fenster zeigt bis zum nächsten Refresh den alten Stand.
+        window_open = lane.window_end is not None and now < lane.window_end
+        minutes0 = lane.minutes if window_open else 0
         self.watch = {
-            "lane": lane.lane, "group_id": lane.group_id, "lane_name": lane.name, "channel": channel,
+            "lane": lane.lane, "key": lane.key, "group_id": lane.group_id,
+            "lane_name": lane.name, "channel": channel,
             "channel_id": info["channel_id"], "broadcast_id": info["broadcast_id"],
             "game": info["game"], "game_id": info["game_id"],
-            "started_at": now, "start_minutes": lane.minutes,
+            "started_at": now, "start_minutes": minutes0,
             "start_grants": lane.grants,
-            "last_minutes": lane.minutes, "last_progress_at": now,
+            "last_minutes": minutes0, "last_progress_at": now,
             "beacons": 0, "beacon_errors": 0, "bytes_kb": 0, "minutes_logged": 0,
         }
         self._player = None
+        self._ref_channel_id = info["channel_id"] or self._ref_channel_id
         self._log(f"Schaue {channel} ({info['game']}) für {quest.german_name(lane.name)} "
-                  f"— Tag {lane.grants + 1}/{lane.repeat_times}, {lane.minutes}/{lane.required_minutes} min",
+                  f"— Tag {lane.grants + 1}/{lane.repeat_times}, {minutes0}/{lane.required_minutes} min",
                   event=True)
 
     def _channel_from_directory(self, token, proxies, fp, lane, exclude=None):
@@ -528,7 +554,7 @@ class QuestManager(threading.Thread):
                 d["day_complete"] = quest.day_complete(l, now)
                 r = quest.ready_at(l, now)
                 d["ready_at"] = r.isoformat() if r else None
-                b = self.blocked.get(l.lane)
+                b = self.blocked.get(l.key)
                 d["blocked_until"] = b.isoformat() if b and b > now else None
                 lanes.append(d)
             return {

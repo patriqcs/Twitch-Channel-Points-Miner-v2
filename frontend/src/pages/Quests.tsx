@@ -43,6 +43,80 @@ function laneState(l: QuestLane, watching: boolean, now: number) {
   return { label: "wartet", tone: "text-zinc-400", icon: "·" };
 }
 
+// Kampagne ohne Lane-Auswahl (z. B. GTA VI: 60 min pro Tag, jede volle Stunde ein Ketten-Badge).
+function CampaignCard({
+  lanes, ownedSets, watchGroup, now,
+}: {
+  lanes: QuestLane[]; ownedSets: Set<string>; watchGroup: string | undefined; now: number;
+}) {
+  const first = lanes[0];
+  return (
+    <Card>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium">{first.campaign_name}</div>
+        <div className="text-xs text-zinc-500">
+          {first.category_names.join(", ")} · endet {fmtTime(first.campaign_end)}
+        </div>
+      </div>
+      <div className="space-y-4">
+        {lanes.map((l) => {
+          const watching = watchGroup === l.group_id;
+          const st = laneState(l, watching, now);
+          const pct = Math.min(100, Math.round((l.minutes / Math.max(1, l.required_minutes)) * 100));
+          const ownedInPool = l.pool.filter((p) => ownedSets.has(p.badge_set)).length;
+          return (
+            <div key={l.group_id} className={cn("rounded-xl border p-3", watching ? "border-sky-500/60 bg-sky-500/5" : "border-zinc-800 bg-zinc-950/40")}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="font-medium">{l.name}</div>
+                <div className={cn("text-xs", st.tone)}>{st.icon} {st.label}</div>
+              </div>
+              {l.preconditions_met && !l.done && (
+                <>
+                  <div className="mt-2 flex items-center gap-1" title={`Tage: ${l.grants}/${l.repeat_times}`}>
+                    {Array.from({ length: l.repeat_times }).map((_, i) => (
+                      <span
+                        key={i}
+                        className={cn(
+                          "h-2.5 w-2.5 rounded-full",
+                          i < l.grants ? "bg-emerald-400" : i === l.grants && l.minutes > 0 ? "bg-sky-400" : "bg-zinc-700"
+                        )}
+                      />
+                    ))}
+                    <span className="ml-2 text-[11px] text-zinc-400">
+                      Tag {Math.min(l.grants + 1, l.repeat_times)}/{l.repeat_times} · {l.minutes}/{l.required_minutes} min
+                    </span>
+                  </div>
+                  <div className="mt-1 h-1.5 w-full overflow-hidden rounded bg-zinc-800">
+                    <div className="h-full bg-sky-500" style={{ width: `${pct}%` }} />
+                  </div>
+                </>
+              )}
+              {l.pool.length > 0 && (
+                <div className="mt-3">
+                  <div className="mb-1 text-[11px] text-zinc-500">{ownedInPool}/{l.pool.length} Badges im Besitz</div>
+                  <div className="flex flex-wrap gap-2">
+                    {l.pool.map((p) => (
+                      <div key={p.badge_set || p.name} className="flex w-20 flex-col items-center text-center">
+                        <img
+                          src={p.thumbnail}
+                          alt={p.name}
+                          className={cn("h-12 w-12 rounded-lg object-contain", !ownedSets.has(p.badge_set) && "opacity-40 grayscale")}
+                          loading="lazy"
+                        />
+                        <div className="mt-1 text-[11px] leading-tight text-zinc-400">{p.name}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
 function Stage({
   setId, image, lane, owned, watching, now, onSelect,
 }: {
@@ -185,13 +259,18 @@ export default function Quests() {
   const laneBySet = new Map(lanes.map((l) => [l.badge_set || l.name.toLowerCase(), l]));
   const watch = status?.watch ?? null;
   const d = status?.decision ?? null;
+  const ownedSets = new Set(badges.map((b) => b.set_id));
+  const campaigns = new Map<string, QuestLane[]>();
+  for (const l of lanes.filter((x) => x.trackless)) {
+    campaigns.set(l.campaign_id, [...(campaigns.get(l.campaign_id) ?? []), l]);
+  }
   const openLanes = lanes.filter((l) => !l.done && l.preconditions_met);
   const doneLanes = lanes.filter((l) => l.done);
 
   let headline = "Modul aus";
   if (cfg.enabled) {
     if (watch) headline = `👀 schaut ${watch.channel} (${watch.game ?? "?"}) für ${watch.lane_name_de} · ${watch.minutes_logged ?? watch.beacons} min gemeldet · ${Math.round((watch.bytes_kb ?? 0) / 1024)} MB`;
-    else if (d?.action === "idle") headline = `🌙 Pause – alle Lanes für heute voll, weiter ${fmtIn(d.resume_at, now)} (${fmtTime(d.resume_at)})`;
+    else if (d?.action === "idle") headline = `🌙 Pause – für heute alles voll, weiter ${fmtIn(d.resume_at, now)} (${fmtTime(d.resume_at)})`;
     else if (d?.action === "done") headline = "🏁 Alles freigeschaltet – nichts mehr zu tun";
     else if (d?.action === "watch") headline = "🔎 suche Live-Kanal in einer zählenden Kategorie…";
     else headline = "⏳ lade Fortschritt…";
@@ -201,10 +280,11 @@ export default function Quests() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Badges (Pokémon-Quests)</h1>
+          <h1 className="text-xl font-semibold">Badges (GTA VI, Pokémon)</h1>
           <p className="text-sm text-zinc-400">
-            20 Minuten pro Tag und Pokémon in einer zählenden Kategorie, 3 Tage je Stufe. Das Modul schaut für den
-            Account einen passenden Live-Kanal, wechselt die Lane nach jedem vollen Tag und pausiert, wenn alles voll ist.
+            GTA VI: 60 Minuten pro Tag in der Kategorie, an 6 Tagen, jeder volle Tag bringt ein Ketten-Badge. Pokémon:
+            20 Minuten pro Tag und Stufe, 3 Tage. Das Modul schaut für den Account einen passenden Live-Kanal, nimmt die
+            Kampagne mit der frühesten Frist zuerst und pausiert, wenn für heute alles voll ist.
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm">
@@ -228,6 +308,10 @@ export default function Quests() {
           </Button>
         </div>
       </Card>
+
+      {[...campaigns.entries()].map(([id, ls]) => (
+        <CampaignCard key={id} lanes={ls} ownedSets={ownedSets} watchGroup={watch?.group_id} now={now} />
+      ))}
 
       {LINES.map((line) => {
         const starterOwned = badgeBySet.has(line.stages[0]);
@@ -272,7 +356,7 @@ export default function Quests() {
           </label>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-sm">
-              <div className="mb-1 text-zinc-400">Max. Minuten je Lane/Tag</div>
+              <div className="mb-1 text-zinc-400">Max. Minuten je Tag (mind. fehlende Minuten + 15)</div>
               <Input type="number" value={cfg.max_minutes} onChange={(e) => set("max_minutes", Number(e.target.value))} />
             </label>
             <label className="text-sm">

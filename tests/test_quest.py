@@ -84,14 +84,16 @@ def test_parse_campaigns_skips_non_watch_and_sub_groups():
     assert [l.name for l in lanes] == ["Pikachu"]
 
 
-def test_parse_campaigns_skips_groups_without_progression_track():
-    """Fremde Watch-Kampagnen (z. B. „WoW Grinder") haben weder track noch lane
-    und dürfen nicht als Lane auftauchen — sonst versucht der Planer, Twitch auf
-    eine leere Lane umzuschalten (INVALID_SELECTION)."""
+def test_parse_campaigns_skips_channel_bound_groups_without_progression_track():
+    """Kanalgebundene Streamer-Badges (z. B. „WoW Grinder": kein track, keine
+    lane, keine Kategorien) dürfen nicht als Lane auftauchen — für sie gibt es
+    keine Kanalwahl."""
     foreign = _group("WoW Grinder", "", required=480)
     foreign["track"] = None
     foreign["lane"] = None
     foreign["name"] = None
+    foreign["progressCriteria"]["categories"] = []
+    foreign["progressCriteria"]["channels"] = [{"id": "123"}]
     lanes = quest.parse_campaigns(_inventory([foreign, _group("Pikachu", "lane-p")]), now=NOW)
     assert [l.name for l in lanes] == ["Pikachu"]
 
@@ -385,3 +387,110 @@ def test_plan_continues_on_same_lane_with_next_stage_after_first_stage_done():
                    _group("Pikachu", "lane-pichu"))
     d = quest.plan(lanes, selected_lane="lane-char", now=NOW, priority=[])
     assert d.action == "watch" and d.lane.name == "Charizard" and d.switch is False
+
+
+# ---------------------------------------------------------------- tracklose Kampagnen (GTA VI)
+GTA_CATS = [{"id": "1867279146", "displayName": "Grand Theft Auto VI"}]
+
+
+def _gta_group(minutes=0, grants=0, window=None, pre=True):
+    """„GTA DVD Drops" wie live am 2026-11-22: kein track/lane, 60 min, 6 Tage, Truhe."""
+    g = _group("GTA DVD Drops", "", minutes=minutes, grants=grants, window=window,
+               pre=pre, repeat=6, required=60)
+    g["id"] = "grp-gta"
+    g["track"] = None
+    g["lane"] = None
+    g["progressCriteria"]["isAutoProgressable"] = True
+    g["progressCriteria"]["repeatableConfig"]["shouldCompleteAllRepeatsToEarn"] = False
+    g["progressCriteria"]["categories"] = GTA_CATS
+    g["rewards"] = [{"id": "chest", "name": "GTA DVD Chest", "distributionType": "POOL",
+                     "thumbnailURL": "https://x/default.png", "dropDetail": None,
+                     "pool": {"id": "chest", "rewards": [
+                         {"id": "r1", "name": "Purple Chain", "thumbnailURL": "https://x/p.png",
+                          "dropDetail": {"badge": {"id": "a", "setID": "purple-chain"}}},
+                         {"id": "r2", "name": "Bronze Chain", "thumbnailURL": "https://x/b.png",
+                          "dropDetail": {"badge": {"id": "b", "setID": "bronze-chain"}}}]}}]
+    return g
+
+
+def _gta_campaign(groups, end="2026-12-01T07:59:59.999Z"):
+    return {"id": "camp-gta", "status": "ACTIVE", "name": "GTAVI Launch Celebration",
+            "startAt": "2026-11-18T11:00:00Z", "endAt": end, "rewardGroups": groups}
+
+
+def _with_gta(inv, groups):
+    inv["currentUser"]["inventory"]["viewerRewardDropCampaignsInProgress"].append(
+        _gta_campaign(groups))
+    return inv
+
+
+def test_parse_campaigns_accepts_category_campaign_without_track():
+    lanes = quest.parse_campaigns(_with_gta(_inventory([]), [_gta_group(minutes=12, grants=2)]),
+                                  now=NOW)
+    assert len(lanes) == 1
+    g = lanes[0]
+    assert g.trackless and g.key == "grp-gta" and g.lane == ""
+    assert g.required_minutes == 60 and g.repeat_times == 6 and g.grants == 2
+    assert g.categories == {"1867279146"}
+    assert [p["badge_set"] for p in g.pool] == ["purple-chain", "bronze-chain"]
+    assert g.to_dict()["trackless"] is True
+
+
+def test_plan_watches_trackless_lane_without_switching():
+    lanes = quest.parse_campaigns(_with_gta(_inventory([]), [_gta_group(minutes=12, grants=2)]),
+                                  now=NOW)
+    d = quest.plan(lanes, selected_lane=None, now=NOW, priority=[])
+    assert d.action == "watch" and d.lane.group_id == "grp-gta" and d.switch is False
+
+
+def test_plan_prefers_campaign_with_earlier_deadline_over_selected_lane():
+    inv = _with_gta(_inventory([_group("Pikachu", "lane-pichu", minutes=5)]), [_gta_group()])
+    lanes = quest.parse_campaigns(inv, now=NOW)
+    d = quest.plan(lanes, selected_lane="lane-pichu", now=NOW, priority=["Pikachu"])
+    assert d.lane.group_id == "grp-gta" and d.switch is False
+
+
+def test_plan_falls_back_to_other_campaign_while_trackless_day_is_full():
+    inv = _with_gta(_inventory([_group("Pikachu", "lane-pichu")]),
+                    [_gta_group(minutes=60, grants=2, window=_window(NOW - timedelta(hours=2)))])
+    lanes = quest.parse_campaigns(inv, now=NOW)
+    d = quest.plan(lanes, selected_lane=None, now=NOW, priority=[])
+    assert d.action == "watch" and d.lane.lane == "lane-pichu" and d.switch is True
+
+
+def test_plan_idles_until_trackless_window_expires_and_respects_block_by_group():
+    start = NOW - timedelta(hours=2)
+    full = quest.parse_campaigns(_with_gta(_inventory([]), [
+        _gta_group(minutes=60, grants=2, window=_window(start))]), now=NOW)
+    d = quest.plan(full, selected_lane=None, now=NOW, priority=[])
+    assert d.action == "idle" and d.resume_at == start + timedelta(hours=24)
+    open_ = quest.parse_campaigns(_with_gta(_inventory([]), [_gta_group()]), now=NOW)
+    until = NOW + timedelta(minutes=30)
+    d2 = quest.plan(open_, selected_lane=None, now=NOW, priority=[], blocked={"grp-gta": until})
+    assert d2.action == "idle" and d2.resume_at == until
+
+
+def test_parse_campaigns_merges_extra_groups_of_known_campaigns_only():
+    """Golden Iguana („Ultimate Reward") steht nur im Kanal-Fortschritt."""
+    ultimate = _gta_group()
+    ultimate["id"] = "grp-ultimate"
+    ultimate["name"] = "Ultimate Reward"
+    ultimate["self"] = None
+    extra = [_gta_campaign([_gta_group(minutes=3), ultimate]),
+             {"id": "camp-foreign", "status": "ACTIVE", "name": "Fremd",
+              "endAt": "2026-12-01T07:59:59Z", "rewardGroups": [_gta_group()]}]
+    extra[1]["rewardGroups"][0]["id"] = "grp-foreign"
+    lanes = quest.parse_campaigns(_with_gta(_inventory([]), [_gta_group(minutes=12)]),
+                                  now=NOW, extra=extra)
+    assert [l.group_id for l in lanes] == ["grp-gta", "grp-ultimate"]
+    assert lanes[0].minutes == 12              # Inventar gewinnt bei Dubletten
+    assert lanes[1].preconditions_met is False  # gesperrt, bis Twitch sie freigibt
+    assert quest.plan(lanes[1:], None, NOW, []).action == "done"
+
+
+def test_watch_outcome_cap_scales_with_required_minutes():
+    lane = quest.parse_campaigns(_with_gta(_inventory([]), [_gta_group(minutes=40)]), now=NOW)[0]
+    started = NOW - timedelta(minutes=50)
+    assert quest.watch_outcome(lane, 0, started, NOW - timedelta(minutes=1), NOW, 35, 10) == "continue"
+    assert quest.watch_outcome(lane, 0, NOW - timedelta(minutes=76), NOW - timedelta(minutes=1),
+                               NOW, 35, 10) == "capped"

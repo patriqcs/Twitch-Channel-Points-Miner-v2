@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Badge-Quests (Pokémon-Reward-Drops): Konfiguration, Status, manuelle Lane-Wahl.
+"""Badge-Quests (Reward-Drops: GTA VI, Pokémon): Konfiguration, Status, manuelle Lane-Wahl.
 
 Die Arbeit macht der Hintergrund-Thread backend/quest_manager.py; hier nur die
 Oberfläche dazu.

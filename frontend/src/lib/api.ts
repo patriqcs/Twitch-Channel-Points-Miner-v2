@@ -305,6 +305,9 @@ export interface QuestLane {
   category_names: string[];
   thumbnail: string;
   badge_set: string;
+  key: string;
+  trackless: boolean;
+  pool: { name: string; thumbnail: string; badge_set: string }[];
   selected: boolean;
   day_complete: boolean;
   ready_at: string | null;
@@ -324,6 +327,7 @@ export interface QuestStatus {
   badges: QuestBadge[];
   watch: {
     lane: string;
+    group_id?: string;
     lane_name: string;
     lane_name_de: string;
     channel: string;

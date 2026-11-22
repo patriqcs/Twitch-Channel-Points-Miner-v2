@@ -46,7 +46,7 @@ export default function Layout() {
       </aside>
 
       {/* Mobile top nav */}
-      <div className="flex flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col">
         <nav className="flex gap-1 overflow-x-auto border-b border-zinc-800 p-2 sm:hidden">
           {nav.map((n) => (
             <NavLink

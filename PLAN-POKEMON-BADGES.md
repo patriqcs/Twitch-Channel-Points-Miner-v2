@@ -112,6 +112,8 @@ vorhandenen Beacon vom Heim-IP wie bisher).
 
 ## 5. Weiterentwicklung
 
+- **Seit 2026-11-22: Kampagnen ohne Lane, die an Kategorien hängen, werden mitgefarmt** (GTA VI,
+  siehe STAND.md oben). Kanalgebundene Streamer-Badges weiterhin nicht (nächster Punkt).
 - Dieselbe Mechanik könnte **alle** Reward-Drops abdecken (z. B. Streamer-Badges mit `minutesWatched` 240
   wie „HoB Craft Attack" im Inventar). **Seit 2026-11-05 bewusst NICHT:** Watch-Gruppen ohne
   `track`/`lane` (z. B. „WoW Grinder", 480 min) werden im Parser verworfen. Grund: sie gehören zu keinem
