@@ -37,7 +37,8 @@
     Inventar führt. Nicht angestoßen: künftige, Spielgegenstände, tracklose Gruppen ohne Auto-Fortschritt
     (Abschluss-Belohnungen), Kampagnen, deren Abzeichen schon alle im Besitz sind.
   - Live 22.11.: gelistet GTA VI (an), Payday 3, OSRS, Pokémon Evolutions (alle „neu“). Pokémon Night Out
-    (Gastly) fehlt bewusst: Track ohne Lane, nicht anstoßbar, endet 23.11. Dem Account fehlen deshalb
+    (Gastly) steht als „von Hand beginnen“ in der Liste (`startable: false`): Track ohne Lane, nicht anstoßbar, endet 23.11.
+    So werden auch künftige Kampagnen in unbekannter Form angezeigt statt weggefiltert. Dem Account fehlen deshalb
     Nebulak/Alpollo/Gengar; fertige Kampagnen fallen aus dem Inventar (Pokémon Evolutions steht nicht mehr drin).
   - Ungeprüft: ein echter Anstoß einer fremden Kampagne (noch keine freigegeben).
 
