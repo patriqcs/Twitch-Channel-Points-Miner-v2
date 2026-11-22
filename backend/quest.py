@@ -36,6 +36,11 @@ PRIORITY_KEY = "QUEST_PRIORITY"          # Lane-Reihenfolge, Namen kommaseparier
 POOL_KEY = "QUEST_POOL"                  # eigener Kanal-Pool (leer -> Tarn-Pool)
 MAX_MINUTES_KEY = "QUEST_MAX_MINUTES"    # Deckel je Lane und Tag (Stall-Schutz)
 STALL_MINUTES_KEY = "QUEST_STALL_MINUTES"  # ohne Fortschritt -> Lane heute sperren
+# Freigaben (JSON-Listen). Regel siehe campaign_state().
+CAMPAIGNS_ON_KEY = "QUEST_CAMPAIGNS_ON"    # Kampagnen-IDs: von Hand freigegeben
+CAMPAIGNS_OFF_KEY = "QUEST_CAMPAIGNS_OFF"  # Kampagnen-IDs: von Hand abgeschaltet
+AUTO_KEYS_KEY = "QUEST_AUTO_KEYS"          # Spiel-/Marken-Schlüssel: „immer farmen"
+SEEN_KEY = "QUEST_CAMPAIGNS_SEEN"          # schon gemeldete Kampagnen-IDs
 
 DEFAULT_ACCOUNT = "patriQcs"
 DEFAULT_MAX_MINUTES = 35
@@ -77,6 +82,24 @@ def set_setting(session: Session, key: str, value: str) -> None:
         session.add(s)
 
 
+def get_list(session: Session, key: str) -> list:
+    try:
+        v = json.loads(_get(session, key, "[]") or "[]")
+    except ValueError:
+        return []
+    return [str(x) for x in v] if isinstance(v, list) else []
+
+
+def set_list(session: Session, key: str, values) -> None:
+    set_setting(session, key, json.dumps(sorted({str(v) for v in values})))
+
+
+def toggle_in_list(session: Session, key: str, value: str, present: bool) -> None:
+    cur = set(get_list(session, key))
+    (cur.add if present else cur.discard)(value)
+    set_list(session, key, cur)
+
+
 def _as_int(v, default, lo, hi):
     try:
         return max(lo, min(hi, int(float(v))))
@@ -97,6 +120,9 @@ def get_config(session: Session) -> dict:
                                DEFAULT_MAX_MINUTES, 20, 180),
         "stall_minutes": _as_int(_get(session, STALL_MINUTES_KEY, DEFAULT_STALL_MINUTES),
                                  DEFAULT_STALL_MINUTES, 3, 60),
+        "campaigns_on": get_list(session, CAMPAIGNS_ON_KEY),
+        "campaigns_off": get_list(session, CAMPAIGNS_OFF_KEY),
+        "auto_keys": get_list(session, AUTO_KEYS_KEY),
     }
 
 
@@ -128,6 +154,13 @@ GQL_CHANNEL_PROGRESS = (
     "query DropChannelCampaignsProgress($channelID: ID!) { "
     "channelDropCampaignsProgress(channelID: $channelID) { ...questCampaign } } "
     + _FRAG_GROUPS + " " + _FRAG_REWARDS
+)
+# Alle laufenden und angekündigten Kampagnen (auch nicht begonnene). Achtung:
+# `self` ist hier ein Platzhalter (immer 0 Minuten, Vorbedingung erfüllt) und
+# sagt nichts über den echten Fortschritt -> nur zum Entdecken und Anstoßen.
+GQL_DISCOVERY = (
+    "query NewAllCampaignsPage { dropsCampaigns(includeUpcoming: true) { ...questCampaign "
+    "game { id displayName } } } " + _FRAG_GROUPS + " " + _FRAG_REWARDS
 )
 GQL_TRACK_SELECTIONS = (
     "query ProgressionTrackSelections($tracks: [ID!]!) { "
@@ -203,6 +236,8 @@ class Lane:
     thumbnail: str = ""
     badge_set: str = ""
     pool: list = field(default_factory=list)   # [{name, thumbnail, badge_set}] bei Truhen
+    seed: bool = False      # aus der Kampagnenliste, noch nicht im Inventar (Fortschritt unbekannt)
+    enabled: bool = True    # False = Kampagne von Hand abgeschaltet
 
     @property
     def key(self) -> str:
@@ -229,11 +264,12 @@ class Lane:
             "category_names": self.category_names, "thumbnail": self.thumbnail,
             "badge_set": self.badge_set, "key": self.key,
             "trackless": self.trackless, "pool": list(self.pool),
+            "seed": self.seed, "enabled": self.enabled,
         }
 
 
 def parse_campaigns(data: dict, now: "datetime | None" = None,
-                    extra: "list | None" = None) -> list:
+                    extra: "list | None" = None, seeds: "list | None" = None) -> list:
     """`ViewerRewardDropInventory`-Antwort -> Lanes (nur WATCH-Gruppen aktiver Kampagnen).
 
     Twitch lässt abgelaufene Kampagnen (status EXPIRED, endAt vorbei) noch im
@@ -242,15 +278,24 @@ def parse_campaigns(data: dict, now: "datetime | None" = None,
     extra: Kampagnen aus `DropChannelCampaignsProgress` eines Kanals. Das Inventar
     zeigt nur begonnene Gruppen; Abschluss-Belohnungen (z. B. „Ultimate Reward" =
     Golden Iguana) stehen nur dort. Übernommen werden daraus nur zusätzliche
-    Gruppen von Kampagnen, die schon im Inventar sind."""
+    Gruppen von Kampagnen, die schon im Inventar sind.
+
+    seeds: freigegebene Kampagnen aus der Kampagnenliste (`GQL_DISCOVERY`). Sie
+    werden nur genommen, solange die Kampagne im Inventar noch fehlt, damit das
+    Modul sie anstoßen kann; sobald Twitch sie im Inventar führt, gilt nur noch
+    der echte Stand von dort."""
     now = now or datetime.now(timezone.utc)
     lanes = []
     seen_groups = set()
     known_campaigns = set()
     inv = ((data or {}).get("currentUser") or {}).get("inventory") or {}
-    sources = [(c, False) for c in inv.get("viewerRewardDropCampaignsInProgress") or []]
-    sources += [(c, True) for c in extra or []]
-    for camp, is_extra in sources:
+    in_inventory = inv.get("viewerRewardDropCampaignsInProgress") or []
+    inventory_ids = {c.get("id") for c in in_inventory}
+    sources = [(c, "inv") for c in in_inventory]
+    sources += [(c, "extra") for c in extra or []]
+    sources += [(c, "seed") for c in seeds or [] if c.get("id") not in inventory_ids]
+    for camp, kind in sources:
+        is_extra = kind == "extra"
         if (camp.get("status") or "").upper() == "EXPIRED":
             continue
         end = _parse_dt(camp.get("endAt"))
@@ -261,12 +306,113 @@ def parse_campaigns(data: dict, now: "datetime | None" = None,
         for g in camp.get("rewardGroups") or []:
             if g.get("id") in seen_groups:
                 continue
+            if kind == "seed" and not _seedable(camp, g, now):
+                continue
             lane = _lane_from_group(camp, g)
             if lane is not None:
+                lane.seed = kind == "seed"
                 seen_groups.add(g.get("id"))
                 known_campaigns.add(camp.get("id"))
                 lanes.append(lane)
     return lanes
+
+
+def _twitch_reward(g: dict) -> bool:
+    """Belohnung liegt bei Twitch selbst (Abzeichen, Emote, Truhe) statt im Spiel."""
+    return any((r.get("distributionType") or "").upper() != "DIRECT_ENTITLEMENT"
+               for r in g.get("rewards") or [])
+
+
+def _seedable(camp: dict, g: dict, now: datetime) -> bool:
+    """Darf eine Gruppe aus der Kampagnenliste angestoßen werden?"""
+    start = _parse_dt(camp.get("startAt"))
+    if start is not None and start > now:
+        return False
+    if not _twitch_reward(g):
+        return False
+    # Tracklose Gruppen ohne Auto-Fortschritt sind Abschluss-Belohnungen mit
+    # Vorbedingung (Golden Iguana); die Liste zeigt die Vorbedingung nicht ehrlich an.
+    pc = g.get("progressCriteria") or {}
+    if (not g.get("track") or not g.get("lane")) and not pc.get("isAutoProgressable"):
+        return False
+    return True
+
+
+def campaign_auto_key(camp: dict) -> tuple:
+    """(Schlüssel, Anzeigename) für „dieses Spiel immer farmen": Spiel der Kampagne,
+    sonst die einzige Kategorie, sonst die Marke. ("", "") = keine Dauerfreigabe möglich."""
+    game = camp.get("game") or {}
+    if game.get("id"):
+        return f"g:{game['id']}", game.get("displayName") or ""
+    cats = {}
+    for g in camp.get("rewardGroups") or []:
+        for c in (g.get("progressCriteria") or {}).get("categories") or []:
+            if c.get("id"):
+                cats[str(c["id"])] = c.get("displayName") or ""
+    if len(cats) == 1:
+        cid, name = next(iter(cats.items()))
+        return f"g:{cid}", name
+    brand = (camp.get("brandName") or "").strip()
+    if brand:
+        return f"b:{brand.lower()}", brand
+    return "", ""
+
+
+def campaign_state(campaign_id: str, auto_key: str, in_inventory: bool, cfg: dict) -> str:
+    """on | off | new. Abschalten von Hand gewinnt; sonst zählt Freigabe von Hand,
+    Dauerfreigabe des Spiels oder dass die Kampagne schon begonnen wurde."""
+    if campaign_id in (cfg.get("campaigns_off") or []):
+        return "off"
+    if campaign_id in (cfg.get("campaigns_on") or []):
+        return "on"
+    if auto_key and auto_key in (cfg.get("auto_keys") or []):
+        return "on"
+    return "on" if in_inventory else "new"
+
+
+def parse_discovery(data: dict, now: "datetime | None" = None) -> list:
+    """`GQL_DISCOVERY`-Antwort -> Kampagnen, die das Modul farmen könnte: mindestens
+    eine Schau-Gruppe mit Kategorie, deren Belohnung bei Twitch liegt. Reine
+    Spielgegenstände (klassische Drops, brauchen ein verknüpftes Spielkonto) und
+    reine Sub-Belohnungen fallen raus."""
+    now = now or datetime.now(timezone.utc)
+    out = []
+    for camp in (data or {}).get("dropsCampaigns") or []:
+        if (camp.get("status") or "").upper() == "EXPIRED":
+            continue
+        end = _parse_dt(camp.get("endAt"))
+        if end is not None and end <= now:
+            continue
+        groups = []
+        for g in camp.get("rewardGroups") or []:
+            if not _twitch_reward(g):
+                continue
+            lane = _lane_from_group(camp, g)
+            if lane is None:
+                continue
+            groups.append({
+                "name": lane.name, "minutes": lane.required_minutes,
+                "repeat": lane.repeat_times, "thumbnail": lane.thumbnail,
+                "categories": lane.category_names[:3],
+                "category_count": len(lane.category_names),
+            })
+        if not groups:
+            continue
+        key, label = campaign_auto_key(camp)
+        start = _parse_dt(camp.get("startAt"))
+        out.append({
+            "id": camp.get("id") or "", "name": (camp.get("name") or "").strip(),
+            "brand": (camp.get("brandName") or "").strip(),
+            "game": ((camp.get("game") or {}).get("displayName") or ""),
+            "image": camp.get("imageURL") or "",
+            "start": start.isoformat() if start else None,
+            "end": end.isoformat() if end else None,
+            "upcoming": bool(start and start > now),
+            "auto_key": key, "auto_label": label,
+            "groups": groups, "raw": camp,
+        })
+    out.sort(key=lambda c: c["end"] or "9999")
+    return out
 
 
 def _lane_from_group(camp: dict, g: dict):

@@ -28,6 +28,16 @@ class SelectBody(BaseModel):
     lane: str
 
 
+class CampaignBody(BaseModel):
+    id: str
+    enabled: bool
+
+
+class AutoBody(BaseModel):
+    key: str
+    enabled: bool
+
+
 @router.get("/config")
 def get_config(session: Session = Depends(get_session)):
     return quest.get_config(session)
@@ -69,3 +79,28 @@ def select_lane(body: SelectBody):
     if not res.get("ok"):
         raise HTTPException(status_code=400, detail=res.get("error") or "Fehler")
     return res
+
+
+@router.post("/campaign")
+def set_campaign(body: CampaignBody, session: Session = Depends(get_session)):
+    """Kampagne freigeben oder abschalten (Entscheidung von Hand gewinnt)."""
+    cid = body.id.strip()
+    if not cid:
+        raise HTTPException(status_code=400, detail="Kampagne fehlt")
+    quest.toggle_in_list(session, quest.CAMPAIGNS_ON_KEY, cid, body.enabled)
+    quest.toggle_in_list(session, quest.CAMPAIGNS_OFF_KEY, cid, not body.enabled)
+    session.commit()
+    quest_manager.poke()
+    return {"ok": True}
+
+
+@router.post("/auto")
+def set_auto(body: AutoBody, session: Session = Depends(get_session)):
+    """Dauerfreigabe für ein Spiel/eine Marke: künftige Kampagnen ohne Rückfrage farmen."""
+    key = body.key.strip()
+    if not key:
+        raise HTTPException(status_code=400, detail="Schlüssel fehlt")
+    quest.toggle_in_list(session, quest.AUTO_KEYS_KEY, key, body.enabled)
+    session.commit()
+    quest_manager.poke()
+    return {"ok": True}

@@ -41,6 +41,8 @@ LIVE_CACHE = 120.0           # s Live-/Kategorie-Cache je Kanal
 PLAYLIST_INTERVAL = 4.0      # s zwischen Playlist-/Segment-Abrufen (wie ein Player)
 MINUTE_INTERVAL = 60.0       # s zwischen zwei minute-watched
 BLOCK_FALLBACK_HOURS = 6.0   # Sperre, wenn kein Fensterende bekannt ist
+DISCOVERY_INTERVAL = 6 * 3600.0  # s zwischen zwei Abfragen der Kampagnenliste
+DISCOVERY_RETRY = 1800.0     # s bis zum nächsten Versuch nach einem Fehler
 
 
 def _now() -> datetime:
@@ -75,6 +77,11 @@ class QuestManager(threading.Thread):
         self._bad_channels: dict = {}   # login -> datetime: hat zuletzt nicht gezählt
         self._lane_stalls: dict = {}    # lane -> Anzahl Stalls heute
         self._ref_channel_id: str = ""  # zuletzt geschauter Kanal (für Kanal-Fortschritt)
+        # Kampagnenliste (alle laufenden, auch nicht begonnene)
+        self.discovered: list = []      # quest.parse_discovery()
+        self.next_discovery = 0.0       # monotonic
+        self._inventory_ids: set = set()
+        self._cfg: dict = {}
         self.log: deque = deque(maxlen=60)
         self._last_nochannel_log = 0.0
         self._last_dir_lookup = 0.0
@@ -142,6 +149,7 @@ class QuestManager(threading.Thread):
         with Session(engine) as s:
             cfg = quest.get_config(s)
             cover_cfg = cover.get_config(s)
+        self._cfg = cfg
         if not cfg["enabled"]:
             if self.watch:
                 self._stop_watch("Modul deaktiviert")
@@ -153,14 +161,18 @@ class QuestManager(threading.Thread):
         now = _now()
         mono = time.monotonic()
 
-        # --- Fortschritt auffrischen
+        # --- Fortschritt auffrischen (Badges zuerst: _refresh braucht den Besitz)
+        if mono - self.last_badges >= BADGES_REFRESH:
+            self._refresh_badges(token, proxies, fp)
+            self.last_badges = time.monotonic()
         interval = REFRESH_WATCHING if self.watch else REFRESH_IDLE
         if mono - self.last_refresh >= interval:
             self._refresh(token, proxies, fp)
             self.last_refresh = time.monotonic()
-        if mono - self.last_badges >= BADGES_REFRESH:
-            self._refresh_badges(token, proxies, fp)
-            self.last_badges = time.monotonic()
+        # Nach dem Inventar, damit begonnene Kampagnen nicht als neu gemeldet werden;
+        # findet die Liste Neues, wird das Inventar gleich noch einmal geladen.
+        if mono >= self.next_discovery:
+            self._discover(token, proxies, fp)
 
         # --- laufende Sitzung bewerten
         if self.watch:
@@ -213,7 +225,8 @@ class QuestManager(threading.Thread):
 
         # --- planen
         selected = self._selected_for(self.lanes)
-        d = quest.plan(self.lanes, selected, now, cfg["priority"], self.blocked)
+        d = quest.plan([l for l in self.lanes if l.enabled], selected, now,
+                       cfg["priority"], self.blocked)
         self.decision = d
         self.resume_at = d.resume_at
         if d.action != "watch":
@@ -247,7 +260,27 @@ class QuestManager(threading.Thread):
                 extra = cp.get("channelDropCampaignsProgress") or None
             except Exception as e:  # noqa: BLE001
                 logger.debug("channel progress failed: %s", e)
-        lanes = quest.parse_campaigns(data, now=_now(), extra=extra)
+        cfg = self._cfg
+        inv = ((data.get("currentUser") or {}).get("inventory") or {})
+        inventory_ids = {c.get("id") for c in
+                         inv.get("viewerRewardDropCampaignsInProgress") or []}
+        # Freigegebene, aber noch nicht begonnene Kampagnen anstoßen.
+        seeds = [c["raw"] for c in self.discovered
+                 if quest.campaign_state(c["id"], c["auto_key"], False, cfg) == "on"]
+        lanes = quest.parse_campaigns(data, now=_now(), extra=extra, seeds=seeds)
+        owned = {b.get("set_id") for b in self.badges}
+        off = set(cfg.get("campaigns_off") or [])
+        kept = []
+        for l in lanes:
+            # Fällt eine fertige Kampagne aus dem Inventar, sähe sie in der Liste
+            # wieder wie neu aus -> nicht noch einmal anfangen, wenn alle Abzeichen da sind.
+            sets = {p.get("badge_set") for p in l.pool} | {l.badge_set}
+            sets.discard("")
+            if l.seed and sets and sets <= owned:
+                continue
+            l.enabled = l.campaign_id not in off
+            kept.append(l)
+        lanes = kept
         self.user_id = str(((data.get("currentUser") or {}).get("id")) or self.user_id)
         tracks = sorted({l.track for l in lanes if l.track})
         selected = {}
@@ -265,10 +298,39 @@ class QuestManager(threading.Thread):
                     self._log(f"🎉 {quest.german_name(l.name)} freigeschaltet!", event=True)
             self.lanes = lanes
             self.selected = selected
+            self._inventory_ids = inventory_ids
             self.last_error = ""
             # abgelaufene Sperren vergessen
             now = _now()
             self.blocked = {k: v for k, v in self.blocked.items() if v > now}
+
+    def _discover(self, token, proxies, fp):
+        """Kampagnenliste holen und neue Kampagnen einmalig melden."""
+        try:
+            data = self._gql(token, proxies, fp, "NewAllCampaignsPage", quest.GQL_DISCOVERY)
+            found = quest.parse_discovery(data, now=_now())
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Kampagnenliste nicht geladen: {e}")
+            self.next_discovery = time.monotonic() + DISCOVERY_RETRY
+            return
+        self.next_discovery = time.monotonic() + DISCOVERY_INTERVAL
+        with Session(engine) as s:
+            seen = set(quest.get_list(s, quest.SEEN_KEY))
+            fresh = [c for c in found if c["id"] not in seen]
+            if fresh or seen - {c["id"] for c in found}:
+                quest.set_list(s, quest.SEEN_KEY, [c["id"] for c in found])
+                s.commit()
+        for c in fresh:
+            state = quest.campaign_state(c["id"], c["auto_key"],
+                                         c["id"] in self._inventory_ids, self._cfg)
+            hint = {"on": "wird gefarmt", "off": "abgeschaltet",
+                    "new": "wartet auf Freigabe im Tab Badges"}[state]
+            self._log(f"Neue Kampagne: {c['name']} ({c['game'] or c['brand'] or 'Twitch'}) — {hint}",
+                      event=True)
+        with self._lock:
+            self.discovered = found
+        if fresh:
+            self.last_refresh = 0.0
 
     def _refresh_badges(self, token, proxies, fp):
         try:
@@ -557,8 +619,31 @@ class QuestManager(threading.Thread):
                 b = self.blocked.get(l.key)
                 d["blocked_until"] = b.isoformat() if b and b > now else None
                 lanes.append(d)
+            listed = {c["id"] for c in self.discovered}
+            campaigns = []
+            for c in self.discovered:
+                e = {k: v for k, v in c.items() if k != "raw"}
+                e["in_inventory"] = c["id"] in self._inventory_ids
+                e["state"] = quest.campaign_state(c["id"], c["auto_key"],
+                                                  e["in_inventory"], self._cfg)
+                e["auto"] = bool(c["auto_key"]) and c["auto_key"] in (self._cfg.get("auto_keys") or [])
+                campaigns.append(e)
+            # Begonnene Kampagnen, die die Liste nicht (mehr) führt, bleiben schaltbar.
+            for l in self.lanes:
+                if l.campaign_id in listed:
+                    continue
+                listed.add(l.campaign_id)
+                campaigns.append({
+                    "id": l.campaign_id, "name": l.campaign_name, "brand": "", "game": "",
+                    "image": "", "start": None,
+                    "end": l.campaign_end.isoformat() if l.campaign_end else None,
+                    "upcoming": False, "auto_key": "", "auto_label": "", "groups": [],
+                    "in_inventory": True, "auto": False,
+                    "state": quest.campaign_state(l.campaign_id, "", True, self._cfg),
+                })
             return {
                 "account": self._username,
+                "campaigns": campaigns,
                 "user_id": self.user_id,
                 "lanes": lanes,
                 "badges": list(self.badges),

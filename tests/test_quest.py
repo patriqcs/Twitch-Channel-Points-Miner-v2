@@ -494,3 +494,82 @@ def test_watch_outcome_cap_scales_with_required_minutes():
     assert quest.watch_outcome(lane, 0, started, NOW - timedelta(minutes=1), NOW, 35, 10) == "continue"
     assert quest.watch_outcome(lane, 0, NOW - timedelta(minutes=76), NOW - timedelta(minutes=1),
                                NOW, 35, 10) == "capped"
+
+
+# ---------------------------------------------------------------- Kampagnenliste
+
+def _listed(campaign_id, name, groups, game=None, brand="", start="2026-11-01T00:00:00Z",
+            end="2026-12-01T07:59:59.999Z", status="ACTIVE"):
+    return {"id": campaign_id, "status": status, "name": name, "brandName": brand,
+            "startAt": start, "endAt": end, "game": game, "rewardGroups": groups}
+
+
+def _item_group():
+    g = _gta_group()
+    g["id"] = "grp-item"
+    g["rewards"] = [{"id": "r", "name": "500 Coins", "distributionType": "DIRECT_ENTITLEMENT",
+                     "dropDetail": None, "pool": None}]
+    return g
+
+
+def test_parse_discovery_keeps_only_watch_campaigns_with_twitch_side_rewards():
+    sub = _gta_group()
+    sub["id"] = "grp-sub"
+    sub["progressCriteria"]["requirementType"] = "SUB"
+    data = {"dropsCampaigns": [
+        _listed("camp-gta", "GTAVI Launch Celebration", [_gta_group(), sub]),
+        _listed("camp-items", "November Drops", [_item_group()]),
+        _listed("camp-sub", "Sub Badge", [sub]),
+        _listed("camp-old", "Vorbei", [_gta_group()], end="2026-11-01T00:00:00Z"),
+    ]}
+    found = quest.parse_discovery(data, now=NOW)
+    assert [c["id"] for c in found] == ["camp-gta"]
+    assert [g["name"] for g in found[0]["groups"]] == ["GTA DVD Drops"]
+    assert found[0]["upcoming"] is False
+
+
+def test_campaign_auto_key_prefers_game_then_single_category_then_brand():
+    game = {"id": "42", "displayName": "PAYDAY 3"}
+    assert quest.campaign_auto_key(_listed("a", "x", [_gta_group()], game=game)) == ("g:42", "PAYDAY 3")
+    key, label = quest.campaign_auto_key(_listed("a", "x", [_gta_group()]))
+    assert key.startswith("g:") and label
+    many = _listed("a", "x", [_group("Pikachu", "lane-pichu")], brand="Pokemon")
+    assert quest.campaign_auto_key(many) == ("b:pokemon", "Pokemon")
+    assert quest.campaign_auto_key(_listed("a", "x", [_group("Pikachu", "lane-pichu")])) == ("", "")
+
+
+def test_campaign_state_manual_off_beats_everything_and_unstarted_is_new():
+    cfg = {"campaigns_on": ["c-on"], "campaigns_off": ["c-off"], "auto_keys": ["g:42"]}
+    assert quest.campaign_state("c-new", "g:1", False, cfg) == "new"
+    assert quest.campaign_state("c-new", "g:1", True, cfg) == "on"      # schon begonnen
+    assert quest.campaign_state("c-on", "", False, cfg) == "on"
+    assert quest.campaign_state("c-auto", "g:42", False, cfg) == "on"
+    assert quest.campaign_state("c-off", "g:42", True, cfg) == "off"
+
+
+def test_parse_campaigns_seeds_only_campaigns_missing_from_inventory():
+    inv = _with_gta(_inventory([]), [_gta_group(minutes=12, grants=2)])
+    listed_gta = _listed("camp-gta", "GTAVI Launch Celebration", [_gta_group()])
+    listed_gta["id"] = inv["currentUser"]["inventory"]["viewerRewardDropCampaignsInProgress"][-1]["id"]
+    other = _gta_group()
+    other["id"] = "grp-bones"
+    other["name"] = "RuneScape Bones"
+    lanes = quest.parse_campaigns(inv, now=NOW, seeds=[
+        listed_gta, _listed("camp-osrs", "OSRS Hardcore Worlds", [other])])
+    by = {l.group_id: l for l in lanes}
+    gta = [l for l in lanes if l.name == "GTA DVD Drops"]
+    assert len(gta) == 1 and gta[0].seed is False and gta[0].minutes == 12   # echter Stand bleibt
+    assert by["grp-bones"].seed is True and by["grp-bones"].minutes == 0
+
+
+def test_parse_campaigns_does_not_seed_upcoming_items_or_locked_final_rewards():
+    final = _gta_group()
+    final["id"] = "grp-final"
+    final["progressCriteria"]["isAutoProgressable"] = False
+    empty = {"currentUser": {"inventory": {"viewerRewardDropCampaignsInProgress": []}}}
+    lanes = quest.parse_campaigns(empty, now=NOW, seeds=[
+        _listed("camp-later", "Später", [_gta_group()], start="2026-11-20T00:00:00Z"),
+        _listed("camp-items", "Items", [_item_group()]),
+        _listed("camp-final", "Final", [final]),
+    ])
+    assert lanes == []

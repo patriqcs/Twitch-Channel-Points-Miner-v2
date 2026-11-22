@@ -312,6 +312,25 @@ export interface QuestLane {
   day_complete: boolean;
   ready_at: string | null;
   blocked_until: string | null;
+  seed: boolean;
+  enabled: boolean;
+}
+
+export interface QuestCampaign {
+  id: string;
+  name: string;
+  brand: string;
+  game: string;
+  image: string;
+  start: string | null;
+  end: string | null;
+  upcoming: boolean;
+  auto_key: string;
+  auto_label: string;
+  groups: { name: string; minutes: number; repeat: number; thumbnail: string; categories: string[]; category_count: number }[];
+  in_inventory: boolean;
+  state: "on" | "off" | "new";
+  auto: boolean;
 }
 
 export interface QuestBadge {
@@ -324,6 +343,7 @@ export interface QuestStatus {
   account: string;
   user_id: string;
   lanes: QuestLane[];
+  campaigns: QuestCampaign[];
   badges: QuestBadge[];
   watch: {
     lane: string;
@@ -492,6 +512,10 @@ export const api = {
     req<QuestConfig>("/api/quest/config", { method: "PUT", body: JSON.stringify(body) }),
   getQuestStatus: () => req<QuestStatus>("/api/quest/status"),
   questRefresh: () => req<{ ok: boolean }>("/api/quest/refresh", { method: "POST" }),
+  questCampaign: (id: string, enabled: boolean) =>
+    req<{ ok: boolean }>("/api/quest/campaign", { method: "POST", body: JSON.stringify({ id, enabled }) }),
+  questAuto: (key: string, enabled: boolean) =>
+    req<{ ok: boolean }>("/api/quest/auto", { method: "POST", body: JSON.stringify({ key, enabled }) }),
   questSelect: (lane: string) =>
     req<{ ok: boolean }>("/api/quest/select", { method: "POST", body: JSON.stringify({ lane }) }),
   // heist (open heists with opener accounts, join them with joiner accounts)

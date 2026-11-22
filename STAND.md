@@ -23,10 +23,20 @@
 - Ausgerollt 22.11.: Commit 4948fd5, Container per `update_container` neu erstellt, `QUEST_ENABLED=1`.
   Status live: GTA DVD Drops 2/6, Pause bis 23.11. 12:04 UTC.
 - Offen: am 23.11. ab 13:04 im Verlauf prüfen, dass die GTA-Minuten zählen (heute nicht prüfbar, Tag war voll).
-- Idee (nicht gebaut): neue Kampagnen selbst entdecken. Das Inventar zeigt nur begonnene Kampagnen;
-  alle laufenden liefert `query NewAllCampaignsPage { dropsCampaigns(includeUpcoming: true) { id name
-  brandName status startAt endAt game { id displayName } rewardGroups { id progressCriteria { categories
-  { id } } rewards { id name thumbnailURL } } } }`.
+- Kampagnen-Erkennung (22.11., auf Wunsch „neue Kampagnen anzeigen, per Klick freigeben“):
+  - Alle 6 h `NewAllCampaignsPage { dropsCampaigns(includeUpcoming: true) }` (~590 KB, 147 Kampagnen).
+    Fast alles sind Spielgegenstände (`DIRECT_ENTITLEMENT`); gelistet werden nur Kampagnen mit
+    Schau-Gruppe + Kategorie + Belohnung bei Twitch (BADGE/POOL). Am 22.11. waren das fünf:
+    GTA VI, Pokémon Evolutions, Pokémon Night Out, Payday 3, OSRS.
+  - `self` in dieser Liste ist ein Platzhalter (immer 0 min, Vorbedingung „erfüllt“), auch bei GTA mit
+    echtem Stand 2/6. Also nur zum Entdecken/Anstoßen; Fortschritt kommt weiter aus dem Inventar.
+  - Regel `quest.campaign_state`: von Hand aus > von Hand an > Dauerfreigabe Spiel/Marke > schon im
+    Inventar; sonst „neu“ (wird nicht gefarmt). Settings `QUEST_CAMPAIGNS_ON/OFF`, `QUEST_AUTO_KEYS`,
+    `QUEST_CAMPAIGNS_SEEN` (JSON-Listen). API `POST /api/quest/campaign`, `POST /api/quest/auto`.
+  - Freigegebene, noch nicht begonnene Kampagnen werden als „Seed“-Lanes angestoßen, bis Twitch sie im
+    Inventar führt. Nicht angestoßen: künftige, Spielgegenstände, tracklose Gruppen ohne Auto-Fortschritt
+    (Abschluss-Belohnungen), Kampagnen, deren Abzeichen schon alle im Besitz sind.
+  - Ungeprüft: ein echter Anstoß einer fremden Kampagne (noch keine freigegeben).
 
 ## Neu (2026-11-04, „Badges“-Tab: Pokémon-Reward-Drops für den Hauptaccount — implementiert, Tests grün)
 

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, type QuestConfig, type QuestLane, type QuestStatus } from "@/lib/api";
+import { api, type QuestCampaign, type QuestConfig, type QuestLane, type QuestStatus } from "@/lib/api";
 import { Button, Card, Input, Textarea } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -35,12 +35,88 @@ function fmtIn(iso: string | null | undefined, now: number) {
 
 function laneState(l: QuestLane, watching: boolean, now: number) {
   if (l.done) return { label: "freigeschaltet", tone: "text-emerald-400", icon: "✅" };
+  if (!l.enabled) return { label: "abgeschaltet", tone: "text-zinc-500", icon: "⏹" };
   if (!l.preconditions_met) return { label: "noch gesperrt", tone: "text-zinc-500", icon: "🔒" };
   if (l.blocked_until) return { label: `pausiert ${fmtIn(l.blocked_until, now)}`, tone: "text-amber-400", icon: "⏸" };
   if (watching) return { label: "läuft gerade", tone: "text-sky-400", icon: "👀" };
   if (l.day_complete) return { label: `heute voll · weiter ${fmtIn(l.ready_at, now)}`, tone: "text-amber-300", icon: "🌙" };
   if (l.selected) return { label: "ausgewählt", tone: "text-sky-300", icon: "🎯" };
+  if (l.seed) return { label: "noch nicht begonnen", tone: "text-zinc-400", icon: "🆕" };
   return { label: "wartet", tone: "text-zinc-400", icon: "·" };
+}
+
+function groupSummary(c: QuestCampaign) {
+  if (c.groups.length === 0) return "";
+  const parts = c.groups.slice(0, 3).map((g) =>
+    g.repeat > 1 ? `${g.name}: ${g.minutes} min an ${g.repeat} Tagen` : `${g.name}: ${g.minutes} min`
+  );
+  if (c.groups.length > 3) parts.push(`+${c.groups.length - 3} weitere`);
+  return parts.join(" · ");
+}
+
+// Alle Kampagnen, die das Modul farmen kann: Schalter je Kampagne, Dauerfreigabe je Spiel.
+function CampaignList({
+  campaigns, onToggle, onAuto,
+}: {
+  campaigns: QuestCampaign[];
+  onToggle: (c: QuestCampaign, enabled: boolean) => void;
+  onAuto: (c: QuestCampaign, enabled: boolean) => void;
+}) {
+  const fresh = campaigns.filter((c) => c.state === "new").length;
+  return (
+    <Card>
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium">Kampagnen</div>
+        {fresh > 0 && <div className="text-xs text-amber-300">{fresh} neu – wartet auf deine Freigabe</div>}
+      </div>
+      <p className="mb-3 text-xs text-zinc-500">
+        Twitch-Kampagnen mit Abzeichen oder Emotes fürs Zuschauen. Neue Kampagnen startet das Modul erst nach deiner
+        Freigabe. Spielgegenstände und Sub-Belohnungen stehen hier nicht.
+      </p>
+      <div className="divide-y divide-zinc-800">
+        {campaigns.map((c) => {
+          const thumb = c.groups.find((g) => g.thumbnail)?.thumbnail || c.image;
+          const where = c.game || c.brand || c.groups[0]?.categories.join(", ") || "";
+          return (
+            <div key={c.id} className="flex flex-wrap items-center gap-3 py-3">
+              {thumb ? (
+                <img src={thumb} alt="" className="h-10 w-10 shrink-0 rounded-lg object-contain" loading="lazy" />
+              ) : (
+                <div className="h-10 w-10 shrink-0 rounded-lg bg-zinc-800" />
+              )}
+              <div className="min-w-0 flex-1 basis-48">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium">{c.name}</span>
+                  {c.state === "new" && <span className="rounded bg-amber-500/15 px-1.5 text-[11px] text-amber-300">neu</span>}
+                  {c.upcoming && <span className="rounded bg-zinc-800 px-1.5 text-[11px] text-zinc-400">startet {fmtTime(c.start)}</span>}
+                  {c.state === "on" && !c.in_inventory && !c.upcoming && (
+                    <span className="rounded bg-sky-500/15 px-1.5 text-[11px] text-sky-300">wird begonnen</span>
+                  )}
+                </div>
+                <div className="text-xs text-zinc-400">
+                  {where && `${where} · `}endet {fmtTime(c.end)}
+                </div>
+                {c.groups.length > 0 && <div className="text-xs text-zinc-500">{groupSummary(c)}</div>}
+              </div>
+              <div className="flex shrink-0 flex-col items-start gap-1 text-sm">
+                <label className="flex min-h-6 items-center gap-2">
+                  <input type="checkbox" checked={c.state === "on"} onChange={(e) => onToggle(c, e.target.checked)} />
+                  farmen
+                </label>
+                {c.auto_key && (
+                  <label className="flex min-h-6 items-center gap-2 text-xs text-zinc-400">
+                    <input type="checkbox" checked={c.auto} onChange={(e) => onAuto(c, e.target.checked)} />
+                    {c.auto_label} immer
+                  </label>
+                )}
+              </div>
+            </div>
+          );
+        })}
+        {campaigns.length === 0 && <div className="py-3 text-sm text-zinc-400">Kampagnenliste wird geladen…</div>}
+      </div>
+    </Card>
+  );
 }
 
 // Kampagne ohne Lane-Auswahl (z. B. GTA VI: 60 min pro Tag, jede volle Stunde ein Ketten-Badge).
@@ -253,6 +329,26 @@ export default function Quests() {
     }
   };
 
+  const toggleCampaign = async (c: QuestCampaign, enabled: boolean) => {
+    try {
+      await api.questCampaign(c.id, enabled);
+      setMsg(enabled ? `✅ ${c.name} wird gefarmt` : `🛑 ${c.name} abgeschaltet`);
+      qc.invalidateQueries({ queryKey: ["quest-status"] });
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`);
+    }
+  };
+
+  const toggleAuto = async (c: QuestCampaign, enabled: boolean) => {
+    try {
+      await api.questAuto(c.auto_key, enabled);
+      setMsg(enabled ? `✅ ${c.auto_label}: künftige Kampagnen ohne Rückfrage` : `🛑 ${c.auto_label}: wieder mit Freigabe`);
+      qc.invalidateQueries({ queryKey: ["quest-status"] });
+    } catch (e) {
+      setMsg(`❌ ${(e as Error).message}`);
+    }
+  };
+
   const lanes = status?.lanes ?? [];
   const badges = status?.badges ?? [];
   const badgeBySet = new Map(badges.map((b) => [b.set_id, b]));
@@ -264,7 +360,7 @@ export default function Quests() {
   for (const l of lanes.filter((x) => x.trackless)) {
     campaigns.set(l.campaign_id, [...(campaigns.get(l.campaign_id) ?? []), l]);
   }
-  const openLanes = lanes.filter((l) => !l.done && l.preconditions_met);
+  const openLanes = lanes.filter((l) => !l.done && l.preconditions_met && l.enabled);
   const doneLanes = lanes.filter((l) => l.done);
 
   let headline = "Modul aus";
@@ -280,11 +376,11 @@ export default function Quests() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold">Badges (GTA VI, Pokémon)</h1>
+          <h1 className="text-xl font-semibold">Badges</h1>
           <p className="text-sm text-zinc-400">
-            GTA VI: 60 Minuten pro Tag in der Kategorie, an 6 Tagen, jeder volle Tag bringt ein Ketten-Badge. Pokémon:
-            20 Minuten pro Tag und Stufe, 3 Tage. Das Modul schaut für den Account einen passenden Live-Kanal, nimmt die
-            Kampagne mit der frühesten Frist zuerst und pausiert, wenn für heute alles voll ist.
+            Twitch-Kampagnen mit Abzeichen fürs Zuschauen (z. B. GTA VI, Pokémon). Das Modul schaut für den Account einen
+            passenden Live-Kanal, nimmt die Kampagne mit der frühesten Frist zuerst und pausiert, wenn für heute alles
+            voll ist. Neue Kampagnen findet es selbst und wartet auf deine Freigabe.
           </p>
         </div>
         <label className="flex items-center gap-2 text-sm">
@@ -308,6 +404,11 @@ export default function Quests() {
           </Button>
         </div>
       </Card>
+
+      {cfg.enabled && (
+        <CampaignList campaigns={status?.campaigns ?? []} onToggle={toggleCampaign} onAuto={toggleAuto} />
+      )}
+      {msg && <div className="text-sm text-zinc-400">{msg}</div>}
 
       {[...campaigns.entries()].map(([id, ls]) => (
         <CampaignCard key={id} lanes={ls} ownedSets={ownedSets} watchGroup={watch?.group_id} now={now} />
